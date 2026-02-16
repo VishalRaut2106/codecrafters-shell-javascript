@@ -6,4 +6,7 @@ const rl = readline.createInterface({
 });
 
 // TODO: Uncomment the code below to pass the first stage
-rl.question("$ ", (answer) => {});
+rl.question("$ ", (answer) => {
+  console.log(`${command}: command not found`);
+  
+});
