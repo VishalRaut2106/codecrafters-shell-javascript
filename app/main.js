@@ -1,49 +1,77 @@
-const readline = require('readline')
-const { spawnSync } = require('child_process')
+import { access, constants } from "node:fs/promises";
+import { createInterface } from "node:readline/promises";
+import { spawn } from "node:child_process";
+import { stdin as input, stdout as output, env } from "node:process";
+import path from "node:path";
 
-const rl = readline.createInterface({
-	input: process.stdin,
-	output: process.stdout
-})
+async function locateExecutable(name) {
+  if (!env.PATH) return null;
 
-let recognizedCommands = {
-	echo: (cmds) => console.log(cmds.slice(1).join(' ')),
-	exit: (cmds) => process.exit(cmds[1]),
-  type: (cmds) => type(cmds)
-}
-
-let executableInPath = (cmd) => {
-  const res = spawnSync('which', [cmd])
-  if (res.status === 0) return res.stdout.toString().replace(/(\r\n|\n|\r)/gm, '')
-}
-
-let type = (cmds) => {
-  let executable = executableInPath(cmds[1])
-  let builtin = isValidCommand(cmds[1], recognizedCommands)
-  if (executable || builtin) {
-    console.log(`${cmds[1]} is ${builtin ? 'a shell builtin' : executable}`)
+  const pathDirectories = env.PATH.split(path.delimiter);
+  for (const dir of pathDirectories) {
+    let attempt = path.join(dir, name);
+    try {
+      await access(attempt, constants.X_OK);
+      return attempt;
+    } catch (error) {
+      continue;
+    }
   }
-  else {
-    console.log(`${cmds.slice(1).join(' ')}: not found`)
+  return null;
+}
+
+async function evalCommand(command, args) {
+  if (builtins[command]) {
+    return builtins[command](args);
   }
+
+  const execPath = await locateExecutable(command);
+  if (execPath) {
+    const child = spawn(execPath, args, { stdio: "inherit", argv0: command });
+    return await new Promise((resolve) => child.on("close", resolve));
+  }
+
+  console.log(`${command}: command not found`);
 }
 
-rl.setPrompt('$ ')
-rl.prompt()
+const builtins = {
+  echo: (args) => console.log(args.join(" ")),
+  exit: () => "SIG_EXIT",
+  type: async (args) => {
+    const query = args[0];
+    if (builtins[query]) {
+      console.log(`${query} is a shell builtin`);
+    } else {
+      const path = await locateExecutable(query);
+      const logMessage = path ? `${query} is ${path}` : `${query}: not found`;
+      console.log(logMessage);
+    }
+  },
+};
 
-rl.on('line', (input) => {
+const rl = createInterface({ input, output });
+rl.on("SIGINT", () => {
+  rl.clearLine(0);
+  rl.prompt();
+});
 
-	let inputCommands = input.split(' ')
-	let directive = inputCommands[0]
+rl.setPrompt("$ ");
+rl.prompt();
 
-	isValidCommand(directive, recognizedCommands)
-		? recognizedCommands[directive](inputCommands)
-		: console.log(`${input}: command not found`)
+for await (const line of rl) {
+  const input = line.trim();
+  if (!input) {
+    rl.prompt();
+    continue;
+  }
 
-  rl.prompt()
-  
-})
+  const [cmd, ...args] = line.trim().split(" ");
 
-let isValidCommand = (cmd, commandList) => {
-	return commandList.hasOwnProperty(cmd)
+  const signal = await evalCommand(cmd, args);
+
+  if (signal === "SIG_EXIT") break;
+
+  rl.prompt();
 }
+
+rl.close();
