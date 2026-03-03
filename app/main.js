@@ -10,7 +10,7 @@ const rl = readline.createInterface({
 function repl() {
   rl.prompt();  
   rl.once("line", (line) => {
-    console.log(`${line}:command not found`);
+    console.log(`${line}: command not found`);
     repl();
   });
 }
