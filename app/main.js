@@ -1,7 +1,7 @@
-const path = require("path");
-const readline = require("readline");
-const fs = require("fs");
-const child_process = require("child_process");
+import path from "path";
+import readline from "readline";
+import fs from "fs";
+import child_process from "child_process";
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -18,7 +18,7 @@ rl.on("line", (input) => {
 });
 
 const executeCommand = (input) => {
-  [command, ...args] = input.trim().split(" ");
+  const [command, ...args] = input.trim().split(" ");
   if (commands[command]) {
     commands[command](args.filter((arg) => arg.trim()));
   } else {
