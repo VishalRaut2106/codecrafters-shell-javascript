@@ -1,7 +1,7 @@
-const readline = require("readline");
-const path = require("path");
-const fs = require("fs");
-const { execSync } = require("child_process");
+import readline from "readline";
+import path from "path";
+import fs from "fs";
+import { execSync } from "child_process";
 
 const BUILTIN_COMMANDS = ["echo", "exit", "type", "pwd"];
 
@@ -16,7 +16,12 @@ let currDir = process.cwd();
 rl.prompt();
 
 rl.on("line", (command) => {
-  const words = command.split(" ");
+  const words = command.trim().split(" ");
+
+  if (!words[0]) {
+    rl.prompt();
+    return;
+  }
 
   switch (words[0]) {
     case "exit":
@@ -25,10 +30,17 @@ rl.on("line", (command) => {
       console.log(currDir);
       break;
     case "cd":
-      if (fs.existsSync(words[1])) {
-        currDir = words[1];
-      } else {
-        console.log(`cd: ${words[1]}: No such file or directory`);
+      {
+        const rawTarget = words[1] || "~";
+        const target = rawTarget === "~" ? (process.env.HOME || process.env.USERPROFILE || "~") : rawTarget;
+        const nextDir = path.isAbsolute(target) ? target : path.join(currDir, target);
+
+        if (fs.existsSync(nextDir) && fs.statSync(nextDir).isDirectory()) {
+          currDir = path.resolve(nextDir);
+          process.chdir(currDir);
+        } else {
+          console.log(`cd: ${words[1]}: No such file or directory`);
+        }
       }
       break;
     case "echo":
@@ -50,9 +62,9 @@ rl.on("line", (command) => {
       const { result } = searchInPath(words[0]);
       if (result === true) {
         try {
-          const output = execSync(`${command}`);
+          const output = execSync(`${command}`, { cwd: currDir });
           process.stdout.write(output);
-        } catch {
+        } catch (error) {
           console.error(error);
         }
       } else {
@@ -67,10 +79,10 @@ rl.on("line", (command) => {
 const searchInPath = (command) => {
   const directories = process.env.PATH.split(path.delimiter);
 
-  for (directory of directories) {
+  for (const directory of directories) {
     try {
       const files = fs.readdirSync(directory);
-      for (file of files) {
+      for (const file of files) {
         const filePath = path.join(directory, file);
         if (file === command && checkExecutablePermission(filePath)) {
           return { result: true, filePath: filePath };
