@@ -1,24 +1,24 @@
-const readline = require("readline");
-const fs = require('fs');
-const path = require('path');
-const { spawnSync } = require('child_process')
-var parse = require('shell-quote/parse')
+import readline from "readline";
+import fs from "fs";
+import path from "path";
+import { spawnSync } from "child_process";
+import parse from "shell-quote/parse";
 
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
 });
 
-rl.setPrompt("$ ")
+rl.setPrompt("$ ");
 rl.prompt();
 
 const builtinCommands = {
-  "exit": handleExit,
-  "echo": handleEcho,
-  "type": handleType,
-  "pwd": handlePwd,
-  "cd": handleCd
-}
+  exit: handleExit,
+  echo: handleEcho,
+  type: handleType,
+  pwd: handlePwd,
+  cd: handleCd,
+};
 
 function handleExit() {
   process.exit(0);
@@ -28,18 +28,18 @@ function handleEcho(args) {
   if (args.length > 0) {
     console.log(args.join(" "));
   } else {
-    console.log("Nothing to echo.")
+    console.log("Nothing to echo.");
   }
 }
 
 
 function searchExecutable(command, args, shouldExecute) {
-  let directories = process.env.PATH.split(path.delimiter);
+  const directories = process.env.PATH.split(path.delimiter);
   for (const directory of directories) {
     try {
       const fullPath = path.join(directory, command);
       fs.accessSync(fullPath, fs.constants.X_OK);
-      if (!shouldExecute) console.log(`${command} is ${fullPath}`)
+      if (!shouldExecute) console.log(`${command} is ${fullPath}`);
       else {
         spawnSync(fullPath, args, {
           stdio: "inherit",
@@ -47,7 +47,7 @@ function searchExecutable(command, args, shouldExecute) {
         });
       }
       return true;
-    } catch (error) {} //fail silently
+    } catch (error) {}
   }
   return false;
 }
@@ -58,7 +58,6 @@ function handleType(args) {
   else {
     if (!searchExecutable(command, null, false)) console.log(`${command}: not found`);
   }
-  
 }
 
 function handlePwd() {
@@ -69,18 +68,25 @@ function handlePwd() {
 function handleCd(args) {
   const directory = args[0];
   try {
-    if (directory === "~") process.chdir(process.env.HOME)
-    else process.chdir(directory)
-  } catch (error) { console.log(`cd: ${directory}: No such file or directory`) }
+    if (directory === "~") process.chdir(process.env.HOME);
+    else process.chdir(directory);
+  } catch (error) {
+    console.log(`cd: ${directory}: No such file or directory`);
+  }
 }
 
-rl.on('line', (command) => {
+rl.on("line", (command) => {
   const parts = parse(command.trim()).filter(p => typeof p === "string");
+  if (parts.length === 0) {
+    rl.prompt();
+    return;
+  }
+
   const cmd = parts[0];
   const args = parts.slice(1);
 
   if (builtinCommands[cmd]) {
-    builtinCommands[cmd](args);    
+    builtinCommands[cmd](args);
   } else {
     if (!searchExecutable(cmd, args, true)) console.log(`${cmd}: not found`);
   }
