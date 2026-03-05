@@ -12,5 +12,7 @@
   ],
   "author": "",
   "license": "MIT",
-  "dependencies": {}
+  "dependencies": {
+    "shell-quote": "^1.8.1"
+  }
 }
