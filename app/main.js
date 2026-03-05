@@ -1,77 +1,73 @@
-import { access, constants } from "node:fs/promises";
-import { createInterface } from "node:readline/promises";
-import { spawn } from "node:child_process";
-import { stdin as input, stdout as output, env } from "node:process";
-import path from "node:path";
+const path = require("path");
+const readline = require("readline");
+const fs = require("fs");
+const child_process = require("child_process");
 
-async function locateExecutable(name) {
-  if (!env.PATH) return null;
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+  prompt: "$ ",
+});
 
-  const pathDirectories = env.PATH.split(path.delimiter);
-  for (const dir of pathDirectories) {
-    let attempt = path.join(dir, name);
-    try {
-      await access(attempt, constants.X_OK);
-      return attempt;
-    } catch (error) {
-      continue;
-    }
-  }
-  return null;
-}
+rl.prompt();
 
-async function evalCommand(command, args) {
-  if (builtins[command]) {
-    return builtins[command](args);
-  }
+rl.on("line", (input) => {
+  executeCommand(input);
 
-  const execPath = await locateExecutable(command);
-  if (execPath) {
-    const child = spawn(execPath, args, { stdio: "inherit", argv0: command });
-    return await new Promise((resolve) => child.on("close", resolve));
-  }
-
-  console.log(`${command}: command not found`);
-}
-
-const builtins = {
-  echo: (args) => console.log(args.join(" ")),
-  exit: () => "SIG_EXIT",
-  type: async (args) => {
-    const query = args[0];
-    if (builtins[query]) {
-      console.log(`${query} is a shell builtin`);
-    } else {
-      const path = await locateExecutable(query);
-      const logMessage = path ? `${query} is ${path}` : `${query}: not found`;
-      console.log(logMessage);
-    }
-  },
-};
-
-const rl = createInterface({ input, output });
-rl.on("SIGINT", () => {
-  rl.clearLine(0);
   rl.prompt();
 });
 
-rl.setPrompt("$ ");
-rl.prompt();
-
-for await (const line of rl) {
-  const input = line.trim();
-  if (!input) {
-    rl.prompt();
-    continue;
+const executeCommand = (input) => {
+  [command, ...args] = input.trim().split(" ");
+  if (commands[command]) {
+    commands[command](args.filter((arg) => arg.trim()));
+  } else {
+    const filePath = getExecutable(command);
+    if (filePath) {
+      child_process.spawnSync(command, args, { stdio: "inherit" });
+      return;
+    }
+    console.log(`${command}: command not found`);
   }
+};
 
-  const [cmd, ...args] = line.trim().split(" ");
+const commands = {
+  exit: () => process.exit(0),
+  echo: (args) => console.log(args.join(" ")),
+  type: (args) => {
+    for (let i = 0; i < args.length; i++) {
+      if (commands[args[i]]) {
+        console.log(`${args[i]} is a shell builtin`);
+      } else {
+        const filePath = getExecutable(args[i]);
+        if (filePath) {
+          console.log(`${args[i]} is ${filePath}`);
+        } else {
+          console.log(`${args[i]}: not found`);
+        }
+      }
+    }
+  },
+  pwd: () => console.log(process.cwd()),
+};
 
-  const signal = await evalCommand(cmd, args);
-
-  if (signal === "SIG_EXIT") break;
-
-  rl.prompt();
-}
-
-rl.close();
+const getExecutable = (file) => {
+  const paths = process.env.PATH.split(path.delimiter);
+  let found = false;
+  for (const p of paths) {
+    const fullPath = path.join(p, file);
+    if (fs.existsSync(fullPath)) {
+      try {
+        fs.accessSync(
+          fullPath,
+          fs.constants.R_OK | fs.constants.W_OK | fs.constants.X_OK,
+        );
+        found = true;
+        return fullPath;
+      } catch (err) {
+        continue;
+      }
+    }
+  }
+  return null;
+};
