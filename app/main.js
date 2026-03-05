@@ -2,7 +2,6 @@ import readline from "readline";
 import fs from "fs";
 import path from "path";
 import { spawnSync } from "child_process";
-import parse from "shell-quote/parse";
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -75,8 +74,39 @@ function handleCd(args) {
   }
 }
 
+function parseCommandLine(input) {
+  const tokens = [];
+  let current = "";
+  let inSingleQuotes = false;
+
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+
+    if (char === "'") {
+      inSingleQuotes = !inSingleQuotes;
+      continue;
+    }
+
+    if (char === " " && !inSingleQuotes) {
+      if (current.length > 0) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+
+    current += char;
+  }
+
+  if (current.length > 0) {
+    tokens.push(current);
+  }
+
+  return tokens;
+}
+
 rl.on("line", (command) => {
-  const parts = parse(command.trim()).filter(p => typeof p === "string");
+  const parts = parseCommandLine(command.trim());
   if (parts.length === 0) {
     rl.prompt();
     return;
