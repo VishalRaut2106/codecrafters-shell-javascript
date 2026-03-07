@@ -39,7 +39,9 @@ function getCommandCompletions(prefix) {
     }
   }
 
-  return [...candidates].filter((name) => name.startsWith(prefix));
+  return [...candidates]
+    .filter((name) => name.startsWith(prefix))
+    .sort((a, b) => a.localeCompare(b));
 }
 
 const rl = readline.createInterface({
