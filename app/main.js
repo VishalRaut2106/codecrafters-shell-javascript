@@ -1,7 +1,7 @@
-const readline = require("readline");
-const path = require("path");
-const { spawn } = require("child_process");
-const fs = require("fs");
+import readline from "readline";
+import path from "path";
+import { spawn } from "child_process";
+import fs from "fs";
 
 const built_in_commands = new Set(["echo", "type", "exit", "pwd", "cd"]);
 const process_path = process.env.PATH;
