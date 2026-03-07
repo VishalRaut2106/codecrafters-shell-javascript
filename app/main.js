@@ -1,269 +1,306 @@
-import readline from "readline";
-import fs from "fs";
-import pathModule from "path";
-import { spawnSync } from "child_process";
-import os from "os";
+const readline = require("readline");
+const path = require("path");
+const fs = require('fs')
+
+const { constants } = require('node:fs');
+const { join } = require("node:path");
+const { spawnSync } = require('child_process')
+const { chdir, cwd } = require('node:process');
+
+const dir_delimitador = path.delimiter;
+const arr_caminhos_dir = process.env.PATH.split(dir_delimitador)
 
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
-  prompt: "$ ",
 });
 
-let outputFile = null;
+function arquivo_existe(caminhoCompleto) {
+  try {
+    fs.accessSync(caminhoCompleto, constants.X_OK)
+    return true
+  } catch (error) {
+    // captura erro ou falta de permissão
+    return false
+  }
+}
 
-/** CONSTANTS */
-const COMMANDS = {
-  EXIT: "exit",
-  ECHO: "echo",
-  TYPE: "type",
-  PWD: "pwd",
-  CD: "cd",
-};
+function parsearComando(palavras) {
+  const ASPAS_DUPLAS = "\""
+  const ASPAS_SIMPLES = "'"
+  const BARRA_INVERTIDA = '\\';
+  const ESPACO = ' ';
+  const CARACTERES_ESCAPAM_EM_ASPAS_DUPLAS = ['"', '\\', '$', '`'];
 
-/** UTILITY FUNCTIONS */
-function print(text) {
-  if (outputFile) {
-    const fd = fs.openSync(outputFile, "w");
-    fs.writeFileSync(fd, text + "\n");
-    fs.closeSync(fd);
+  const tokens = []
+  let tokenAtual = '';
+  let dentroDeAspasSimples = false;
+  let dentroDeAspasDuplas = false;
+
+
+  const deveEscaparEmAspasDuplas = (letra) => {
+    return CARACTERES_ESCAPAM_EM_ASPAS_DUPLAS.includes(letra)
+  }
+
+  const temProximoCaractere = (index) => {
+    return index + 1 < palavras.length;
+  };
+
+  const salvarToken = () => {
+    if (tokenAtual.length > 0) {
+      tokens.push(tokenAtual);
+      tokenAtual = '';
+    }
+  };
+
+  const processarDentroDeAspasDuplas = (i) => {
+    const letra = palavras[i]
+
+    if (letra === BARRA_INVERTIDA && temProximoCaractere(i)) {
+      const proximaLetra = palavras[i + 1];
+
+      if (deveEscaparEmAspasDuplas(proximaLetra)) {
+        tokenAtual += proximaLetra;
+        return i + 1;
+      } else {
+        tokenAtual += letra;
+        return i;
+      }
+    }
+
+    tokenAtual += letra;
+    return i;
+  }
+
+  const processarForaDeAspas = (i) => {
+    const letra = palavras[i];
+
+    if (letra === BARRA_INVERTIDA && temProximoCaractere(i)) {
+      tokenAtual += palavras[i + 1];
+      return i + 1;
+    }
+
+    if (letra === ESPACO) {
+      salvarToken();
+      return i;
+    }
+
+    tokenAtual += letra;
+    return i;
+  };
+
+
+  for (let i = 0; i < palavras.length; i++) {
+    const letra = palavras[i];
+
+    if (letra === ASPAS_DUPLAS && !dentroDeAspasSimples) {
+      dentroDeAspasDuplas = !dentroDeAspasDuplas;
+      continue;
+    }
+
+    if (letra === ASPAS_SIMPLES && !dentroDeAspasDuplas) {
+      dentroDeAspasSimples = !dentroDeAspasSimples;
+      continue;
+    }
+
+    if (dentroDeAspasDuplas) {
+      i = processarDentroDeAspasDuplas(i);
+    } else if (dentroDeAspasSimples) {
+      tokenAtual += letra;
+    } else {
+      i = processarForaDeAspas(i);
+    }
+  }
+
+  salvarToken();
+  return tokens;
+}
+
+function analisarRedirecionamento(tokens) {
+  const operadores = ['>', '1>', '2>']
+  const operadorEncontrado = operadores.find(op => tokens.includes(op))
+
+  if (!operadorEncontrado) {
+    return { temRedirecionamento: false, tokens: tokens }
+  }
+
+  const indice = tokens.indexOf(operadorEncontrado)
+
+  if (tokens[indice + 1] === undefined) {
+    return { erro: true }
+  }
+
+  const comando = tokens.slice(0, indice)
+  const arquivo = tokens[indice + 1]
+
+  return { temRedirecionamento: true, comando, arquivo, tipoRedirecionamento: operadorEncontrado }
+}
+
+function imprimirEntrada(answer) {
+  const tokens = parsearComando(answer)
+  const analise = analisarRedirecionamento(tokens)
+
+  if (!analise.temRedirecionamento) {
+    const textoProEcho = tokens.slice(1).join(' ')
+    return console.log(textoProEcho)
+  }
+
+  if (analise.tipoRedirecionamento === '2>') {
+    const textoProEcho = analise.comando.slice(1).join(' ')
+    console.log(textoProEcho)
+    fs.writeFileSync(analise.arquivo, '')
+    return
+  }
+
+  else {
+    const conteudoInserirNoArquivo = analise.comando.slice(1)
+    const textoProArquivo = conteudoInserirNoArquivo.join(' ')
+
+    fs.writeFileSync(analise.arquivo, textoProArquivo + '\n')
+  }
+
+}
+
+function encontrarArquivo(comando) {
+  const extensoes_executaveis = process.platform === 'win32'
+    ? ['.exe', '.cmd', '.bat', '.com']
+    : ['']
+
+  let caminhoEncontrado = null;
+
+  arr_caminhos_dir.find(diretorio => {
+    for (const extensao of extensoes_executaveis) {
+      const caminhoCompleto = join(diretorio, `${comando}${extensao}`)
+      if (arquivo_existe(caminhoCompleto)) {
+        caminhoEncontrado = caminhoCompleto
+        return true
+      }
+    }
+    return false
+  })
+
+  return caminhoEncontrado
+}
+
+function checarTipo(answer) {
+  const comando = answer.slice(5);
+
+  const is_builtin = comandos_existentes.find(val => val === comando)
+
+  if (is_builtin) {
+    return console.log(`${comando} is a shell builtin`)
+  }
+
+  let caminho_encontrado;
+
+  caminho_encontrado = encontrarArquivo(comando)
+
+  if (caminho_encontrado) {
+    console.log(`${comando} is ${caminho_encontrado}`)
+  } else {
+    console.log(`${comando}: not found`)
+  }
+}
+
+function executarProgramaExterno(comando) {
+  const tokens = parsearComando(comando)
+  const analise = analisarRedirecionamento(tokens)
+
+  const tokensComando = analise.temRedirecionamento ? analise.comando : tokens;
+
+  const arquivo = tokensComando[0]
+  const parametros = tokensComando.slice(1)
+
+  const caminhoComArquivoExecutavel = encontrarArquivo(arquivo)
+
+  if (!caminhoComArquivoExecutavel) {
+    console.log(`${arquivo}: not found`);
     return;
   }
-  console.log(text);
-}
 
-function prompt() {
-  rl.prompt();
-}
+  const arquivoComExtensao = path.basename(caminhoComArquivoExecutavel)
 
-function findCommand(command) {
-  for (const p of process.env.PATH.split(":")) {
-    const commandPath = pathModule.join(p, command);
-    try {
-      fs.accessSync(commandPath, fs.constants.X_OK);
-      return commandPath;
-    } catch (e) { }
-  }
-  return null;
-}
+  if (analise.temRedirecionamento) {
 
-function replaceTilda(path) {
-  if (path === "~") {
-    return os.homedir();
-  }
-  if (path.startsWith("~/")) {
-    return pathModule.join(os.homedir(), path.slice(2));
-  }
-  return path;
-}
+    if (analise.tipoRedirecionamento === '2>') {
 
-function parseArguments(line) {
-  const tokens = [];
-  let current = "";
-  let inSingleQuotes = false;
-  let inDoubleQuotes = false;
-  let inQuotes = false;
+      const resultado = spawnSync(arquivoComExtensao, parametros, {
+        stdio: ['inherit', 'inherit', 'pipe']
+      })
 
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i];
+      fs.writeFileSync(analise.arquivo, resultado.stderr)
 
-    if (char === "\\" && i + 1 < line.length) {
-      // In single quotes, backslash is literal
-      if (inSingleQuotes) {
-        current += char;
-        continue;
-      }
+    } else {
+      const resultado = spawnSync(arquivoComExtensao, parametros, {
+        stdio: ['inherit', 'pipe', 'inherit']
+      })
 
-      // In double quotes, only certain characters (",\,$,`) can be escaped
-      if (inDoubleQuotes) {
-        const nextChar = line[i + 1];
-        if (
-          nextChar === '"' ||
-          nextChar === "\\" ||
-          nextChar === "$" ||
-          nextChar === "`"
-        ) {
-          current += nextChar;
-          i++;
-        } else {
-          current += char;
-        }
-        continue;
-      }
-
-      // Outside quotes, backslash escapes the next character
-      current += line[i + 1];
-      i++;
-      continue;
+      fs.writeFileSync(analise.arquivo, resultado.stdout)
     }
-
-    if (char === '"') {
-      if (inSingleQuotes) {
-        current += char;
-        continue;
-      }
-      inDoubleQuotes = !inDoubleQuotes;
-      inQuotes = inDoubleQuotes || inSingleQuotes;
-      continue;
-    }
-
-    if (char === "'") {
-      if (inDoubleQuotes) {
-        current += char;
-        continue;
-      }
-      inSingleQuotes = !inSingleQuotes;
-      inQuotes = inDoubleQuotes || inSingleQuotes;
-      continue;
-    }
-
-    if (char === " " && !inQuotes) {
-      if (current !== "") {
-        tokens.push(current);
-        current = "";
-      }
-      continue;
-    }
-
-    current += char;
+  } else {
+    spawnSync(arquivoComExtensao, parametros, {
+      stdio: 'inherit'
+    })
   }
 
-  if (current !== "") tokens.push(current);
-
-  const parsed = tokens
-    .map((token) => token.trim())
-    .filter((token) => token.length > 0);
-
-  let command = parsed[0];
-  let args = parsed.slice(1);
-
-  const outputOperatorIndex = args.findIndex(
-    (arg) => arg === ">" || arg === "1>",
-  );
-
-  outputFile = null;
-  if (outputOperatorIndex !== -1) {
-    outputFile = args[outputOperatorIndex + 1];
-    args = args.slice(0, outputOperatorIndex);
-  }
-
-  return { command, args };
 }
 
-/** BUILTIN COMMANDS */
-function handleChangeDirectory({ args }) {
-  const path = replaceTilda(args[0]);
+function imprimirDiretorioAtual() {
+  return console.log(process.cwd())
+}
+
+function extrairComandoEArgumentos(comandoCompleto) {
+  const partes = comandoCompleto.trim().split(' ')
+
+  return { comando: partes[0], argumentos: partes.slice(1) }
+}
+
+function mudarDiretorioAtual(mudar_diretorio) {
+  const { comando, argumentos } = extrairComandoEArgumentos(mudar_diretorio)
+  let diretorio = argumentos.toString();
 
   try {
-    fs.accessSync(path, fs.constants.R_OK);
-    process.chdir(path);
-  } catch (e) {
-    print(`cd: no such file or directory: ${path}`);
-    prompt();
-    return;
+    chdir(diretorio)
+  } catch (error) {
+    return console.log(`${comando}: ${diretorio}: No such file or directory`)
   }
-
-  prompt();
 }
 
-function handlePrintWorkingDirectory({ args }) {
-  print(process.cwd());
-  prompt();
-}
+const comandos_existentes = ['exit', 'echo', 'type', 'pwd', 'cd']
 
-function handleExit() {
-  rl.close();
-}
+function ativa_recursividade() {
+  rl.question("$ ", (resposta) => {
 
-function handleEcho({ args }) {
-  print(args.join(" "));
-  prompt();
-}
-
-function handleExternalCommand({ command, args }) {
-  const spawnOptions = { stdio: "inherit" };
-
-  if (outputFile) {
-    const fd = fs.openSync(outputFile, "w");
-    spawnOptions.stdio = ["inherit", fd, "inherit"];
-  }
-
-  const childProcess = spawnSync(command, args, spawnOptions);
-
-  if (outputFile) {
-    fs.closeSync(spawnOptions.stdio[1]);
-  }
-  prompt();
-}
-
-function handleUnknownCommand({ command }) {
-  print(`${command}: command not found`);
-  prompt();
-}
-
-function handleType({ args }) {
-  const command = args[0];
-
-  if (!command) {
-    prompt();
-    return;
-  }
-
-  if (Object.values(COMMANDS).includes(command)) {
-    print(`${command} is a shell builtin`);
-    prompt();
-    return;
-  }
-
-  const commandPath = findCommand(command);
-  if (commandPath) {
-    print(`${command} is ${commandPath}`);
-    prompt();
-    return;
-  }
-
-  print(`${command}: not found`);
-  prompt();
-}
-
-/** MAIN FUNCTION */
-function main() {
-  prompt();
-
-  rl.on("line", (line) => {
-    const input = parseArguments(line);
-    const command = input.command;
-
-    if (!command) {
-      prompt();
-      return;
+    if (resposta.match('~')) {
+      resposta = resposta.replace('~', process.env.HOME)
     }
 
-    switch (command) {
-      case COMMANDS.CD:
-        handleChangeDirectory(input);
-        return;
-      case COMMANDS.PWD:
-        handlePrintWorkingDirectory(input);
-        return;
-      case COMMANDS.EXIT:
-        handleExit();
-        return;
-      case COMMANDS.TYPE:
-        handleType(input);
-        return;
-      case COMMANDS.ECHO:
-        handleEcho(input);
-        return;
-      default:
-        if (findCommand(command)) {
-          handleExternalCommand(input);
-          return;
-        }
-        handleUnknownCommand(input);
-        return;
+    if (resposta.startsWith('echo ')) {
+      imprimirEntrada(resposta);
     }
+
+    else if (resposta.startsWith('type ')) {
+      checarTipo(resposta);
+    }
+
+    else if (resposta.startsWith('cd ')) {
+      mudarDiretorioAtual(resposta)
+    }
+
+    else if (resposta.match('pwd')) {
+      imprimirDiretorioAtual()
+    }
+
+    else if (resposta.match('exit')) {
+      return rl.close()
+    }
+
+    else {
+      executarProgramaExterno(resposta)
+    }
+
+    ativa_recursividade()
   });
 }
 
-main();
+ativa_recursividade()
