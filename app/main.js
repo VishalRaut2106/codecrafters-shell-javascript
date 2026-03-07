@@ -1,283 +1,575 @@
 const readline = require("readline");
 const fs = require("fs");
 const path = require("path");
-const { spawn } = require("child_process");
-const os = require("os");
-const { stdout } = require("process");
+const { spawnSync } = require("child_process");
 
-const CMDS = ["type", "echo", "exit", "pwd", "cd"];
+let rlGlobal = null;
+let lastLine = null;
+let lastMatches = null;
 
-let lastCompletionInput = "";
+function completer(line) {
+  const builtins = ["cd", "echo", "exit", "pwd", "type"];
+  
+  if (!line.includes(' ')) {
+    let hits = builtins.filter((cmd) => cmd.startsWith(line));
+    
+    const pathEnv = process.env.PATH || "";
+    const directories = pathEnv.split(path.delimiter);
+    const foundExecutables = new Set();
+    
+    for (const dir of directories) {
+      try {
+        if (!fs.existsSync(dir)) continue;
+        
+        const files = fs.readdirSync(dir);
+        
+        for (const file of files) {
+          if (file.startsWith(line)) {
+            const fullPath = path.join(dir, file);
+            
+            try {
+              fs.accessSync(fullPath, fs.constants.X_OK);
+              // Avoid duplicates with builtins
+              if (!builtins.includes(file)) {
+                foundExecutables.add(file);
+              }
+            } catch (err) {
+              continue;
+            }
+          }
+        }
+      } catch (err) {
+        continue;
+      }
+    }
+    
+    hits = hits.concat(Array.from(foundExecutables));
+    hits.sort();
+    
+    // Remove duplicates
+    hits = [...new Set(hits)];
+    
+    if (hits.length === 0) {
+      if (rlGlobal && rlGlobal.output) {
+        rlGlobal.output.write('\x07');
+      } else {
+        process.stdout.write('\x07');
+      }
+      lastLine = null;
+      lastMatches = null;
+      return [[], line];
+    }
+    
+    if (hits.length === 1) {
+      lastLine = null;
+      lastMatches = null;
+      // Return the match with a trailing space
+      return [[hits[0] + ' '], line];
+    }
+    
+    let commonPrefix = hits[0];
+    for (let i = 1; i < hits.length; i++) {
+      let j = 0;
+      while (j < commonPrefix.length && j < hits[i].length && commonPrefix[j] === hits[i][j]) {
+        j++;
+      }
+      commonPrefix = commonPrefix.substring(0, j);
+    }
+    
+    if (commonPrefix.length > line.length) {
+      lastLine = null;
+      lastMatches = null;
+      return [[commonPrefix], line];
+    }
+    
+    if (lastLine === line && lastMatches && JSON.stringify(lastMatches) === JSON.stringify(hits)) {
+      console.log();
+      console.log(hits.join('  '));
+      if (rlGlobal) {
+        rlGlobal._refreshLine();
+      }
+      lastLine = null;
+      lastMatches = null;
+      return [[], line];
+    }
+    
+    if (rlGlobal && rlGlobal.output) {
+      rlGlobal.output.write('\x07');
+    } else {
+      process.stdout.write('\x07');
+    }
+    lastLine = line;
+    lastMatches = hits;
+    return [[], line];
+  }
+  
+  lastLine = null;
+  lastMatches = null;
+  return [[], line];
+}
+
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
-  completer: (line) => {
-    const executablePaths = process.env.PATH.split(path.delimiter)
-      .map((p) => {
-        try {
-          return fs.readdirSync(p);
-        } catch (err) {
-          return [];
-        }
-      })
-      .flat();
-    const allPaths = [...executablePaths, ...CMDS];
-    const completions = [...new Set(allPaths)];
-
-    const hits = completions.filter((c) => c.startsWith(line));
-
-    if (hits.length === 1) {
-      return [[hits[0] + " "], line];
-    } else if (hits.length > 1 && line === lastCompletionInput) {
-      process.stdout.write("\n" + hits.sort().join("  ") + "\n");
-      rl.prompt();
-      lastCompletionInput = "";
-    } else if (line.length > 0) {
-      process.stdout.write("\x07");
-      lastCompletionInput = line;
-    }
-    return [[], line];
-  },
+  completer: completer,
+  terminal: true
 });
 
-rl.setPrompt("$ ");
-rl.prompt();
+rlGlobal = rl;
 
-rl.on("line", (input) => {
-  input = input.trim();
-  execCmd(input).then(() => {
-    rl.prompt();
-  });
-});
-
-function getCmd(answer) {
-  const tokens = [];
-  let current = "";
-  let inSingle = false;
-  let inDouble = false;
-
-  for (let i = 0; i < answer.length; i++) {
-    const ch = answer[i];
-
-    if (inSingle) {
-      if (ch === "'") {
-        inSingle = false;
-      } else {
-        current += ch;
-      }
-      continue;
-    }
-
-    if (inDouble) {
-      if (ch === '"') {
-        inDouble = false;
-      } else if (ch === "\\" && i + 1 < answer.length) {
-        const next = answer[i + 1];
-        if (["\\", '"', "$", "`"].includes(next)) {
-          current += next;
-          i++;
-        } else {
-          current += "\\";
-        }
-      } else {
-        current += ch;
-      }
-      continue;
-    }
-
-    if (ch === "'") {
-      inSingle = true;
-    } else if (ch === '"') {
-      inDouble = true;
-    } else if (ch === "\\" && i + 1 < answer.length) {
-      current += answer[i + 1];
-      i++;
-    } else if (/\s/.test(ch)) {
-      if (current.length > 0) {
-        tokens.push(current);
-        current = "";
-      }
-    } else {
-      current += ch;
-    }
-  }
-
-  if (current.length > 0) {
-    tokens.push(current);
-  }
-
-  return { cmd: tokens[0] || "", args: tokens.slice(1) };
-}
-
-function execCmd(command) {
-  return new Promise((resolve) => {
-    const { cmd, args } = getCmd(command);
-    const { cleanArgs, stdoutFile, stderrFile, append } =
-      parseRedirection(args);
-
-    if (cmd === "exit") {
-      process.exit(0);
-    } else if (cmd === "echo") {
-      const echoText = cleanArgs.join(" ");
-      writeOutput({ stdoutText: echoText, stdoutFile, stderrFile, append });
-      resolve();
-    } else if (cmd === "pwd") {
-      writeOutput({
-        stdoutText: process.cwd(),
-        stdoutFile,
-        stderrFile,
-        append,
-      });
-      resolve();
-    } else if (cmd === "cd") {
-      const dir = args[0] || os.homedir();
-      changeDirectory(dir);
-      resolve();
-    } else if (cmd === "type") {
-      printType(args[0]);
-      resolve();
-    } else {
-      const execPath = findExecutable(cmd);
-      if (!execPath) {
-        console.log(`${cmd}: command not found`);
-        return resolve();
-      }
-
-      const stdio = [
-        "inherit",
-        stdoutFile ? "pipe" : "inherit",
-        stderrFile ? "pipe" : "inherit",
-      ];
-
-      const child = spawn(execPath, cleanArgs, { stdio, argv0: cmd });
-
-      // Redirect stdout
-      if (stdoutFile) {
-        const outStream = fs.createWriteStream(stdoutFile, {
-          flags: append ? "a" : "w",
-        });
-        child.stdout.pipe(outStream);
-      }
-
-      // Redirect stderr
-      if (stderrFile) {
-        const errStream = fs.createWriteStream(stderrFile, {
-          flags: append ? "a" : "w",
-        });
-        child.stderr.pipe(errStream);
-      }
-
-      child.on("error", (err) => {
-        console.error(`${command}: ${err.message}`);
-        resolve();
-      });
-
-      child.on("exit", () => {
-        resolve();
-      });
-    }
-  });
-}
-
-/* cd */
-function changeDirectory(dir) {
-  try {
-    if (dir === "~") {
-      dir = os.homedir();
-    }
-    process.chdir(dir);
-  } catch (err) {
-    console.error(`cd: ${dir}: No such file or directory`);
-  }
-}
-
-/* type */
-function printType(command) {
-  let found = false;
-  if (CMDS.includes(command)) {
-    console.log(`${command} is a shell builtin`);
-    found = true;
-  } else {
-    const execPath = findExecutable(command);
-    if (execPath) {
-      console.log(`${command} is ${execPath}`);
-      found = true;
-    }
-  }
-  if (!found) {
-    console.log(`${command}: not found`);
-  }
-}
-
-/* find executable */
-function findExecutable(command) {
-  const paths = process.env.PATH.split(path.delimiter);
-  for (const p of paths) {
-    const fullPath = path.join(p, command);
+function findExecutableInPath(command) {
+  const pathEnv = process.env.PATH || "";
+  const directories = pathEnv.split(path.delimiter);
+  
+  for (const dir of directories) {
+    const fullPath = path.join(dir, command);
+    
     try {
-      if (
-        fs.existsSync(fullPath) &&
-        fs.statSync(fullPath).isFile() &&
-        fs.accessSync(fullPath, fs.constants.X_OK) === undefined
-      ) {
-        return fullPath;
+      if (fs.existsSync(fullPath)) {
+        try {
+          fs.accessSync(fullPath, fs.constants.X_OK);
+          return fullPath;
+        } catch (err) {
+          continue;
+        }
       }
     } catch (err) {
       continue;
     }
   }
+  
   return null;
 }
 
-function parseRedirection(args) {
-  let stdoutFile = null;
-  let stderrFile = null;
-  let append = false;
-  const cleanArgs = [];
-
-  for (let i = 0; i < args.length; i++) {
-    if ([">", "1>"].includes(args[i]) && args[i + 1]) {
-      stdoutFile = args[i + 1];
+function parseCommandLine(commandLine) {
+  const args = [];
+  let currentArg = "";
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let redirectOutput = null;
+  let redirectError = null;
+  let appendOutput = null;
+  let appendError = null;
+  let i = 0;
+  
+  while (i < commandLine.length) {
+    const char = commandLine[i];
+    
+    if (char === '\\' && !inSingleQuote && inDoubleQuote) {
       i++;
-    } else if (args[i] === "2>" && args[i + 1]) {
-      stderrFile = args[i + 1];
+      if (i < commandLine.length) {
+        const nextChar = commandLine[i];
+        if (nextChar === '"' || nextChar === '\\' || nextChar === '$' || nextChar === '`') {
+          currentArg += nextChar;
+          i++;
+        } else {
+          currentArg += '\\' + nextChar;
+          i++;
+        }
+      }
+    } else if (char === '\\' && !inSingleQuote && !inDoubleQuote) {
       i++;
-    } else if ([">>", "1>>"].includes(args[i]) && args[i + 1]) {
-      append = true;
-      stdoutFile = args[i + 1];
+      if (i < commandLine.length) {
+        currentArg += commandLine[i];
+        i++;
+      }
+    } else if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
       i++;
-    } else if (args[i] === "2>>" && args[i + 1]) {
-      append = true;
-      stderrFile = args[i + 1];
+    } else if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+      i++;
+    } else if (char === '>' && !inSingleQuote && !inDoubleQuote) {
+      if (i + 1 < commandLine.length && commandLine[i + 1] === '>') {
+        if (currentArg.length > 0) {
+          args.push(currentArg);
+          currentArg = "";
+        }
+        i += 2;
+        while (i < commandLine.length && (commandLine[i] === ' ' || commandLine[i] === '\t')) {
+          i++;
+        }
+        let filename = "";
+        let inFileQuote = false;
+        let fileQuoteChar = null;
+        while (i < commandLine.length) {
+          const c = commandLine[i];
+          if ((c === '"' || c === "'") && !inFileQuote) {
+            inFileQuote = true;
+            fileQuoteChar = c;
+            i++;
+          } else if (c === fileQuoteChar && inFileQuote) {
+            inFileQuote = false;
+            fileQuoteChar = null;
+            i++;
+          } else if ((c === ' ' || c === '\t') && !inFileQuote) {
+            break;
+          } else {
+            filename += c;
+            i++;
+          }
+        }
+        appendOutput = filename;
+      } else {
+        if (currentArg.length > 0) {
+          args.push(currentArg);
+          currentArg = "";
+        }
+        i++;
+        while (i < commandLine.length && (commandLine[i] === ' ' || commandLine[i] === '\t')) {
+          i++;
+        }
+        let filename = "";
+        let inFileQuote = false;
+        let fileQuoteChar = null;
+        while (i < commandLine.length) {
+          const c = commandLine[i];
+          if ((c === '"' || c === "'") && !inFileQuote) {
+            inFileQuote = true;
+            fileQuoteChar = c;
+            i++;
+          } else if (c === fileQuoteChar && inFileQuote) {
+            inFileQuote = false;
+            fileQuoteChar = null;
+            i++;
+          } else if ((c === ' ' || c === '\t') && !inFileQuote) {
+            break;
+          } else {
+            filename += c;
+            i++;
+          }
+        }
+        redirectOutput = filename;
+      }
+    } else if (char === '2' && !inSingleQuote && !inDoubleQuote && i + 1 < commandLine.length && commandLine[i + 1] === '>') {
+      if (i + 2 < commandLine.length && commandLine[i + 2] === '>') {
+        if (currentArg.length > 0) {
+          args.push(currentArg);
+          currentArg = "";
+        }
+        i += 3;
+        while (i < commandLine.length && (commandLine[i] === ' ' || commandLine[i] === '\t')) {
+          i++;
+        }
+        let filename = "";
+        let inFileQuote = false;
+        let fileQuoteChar = null;
+        while (i < commandLine.length) {
+          const c = commandLine[i];
+          if ((c === '"' || c === "'") && !inFileQuote) {
+            inFileQuote = true;
+            fileQuoteChar = c;
+            i++;
+          } else if (c === fileQuoteChar && inFileQuote) {
+            inFileQuote = false;
+            fileQuoteChar = null;
+            i++;
+          } else if ((c === ' ' || c === '\t') && !inFileQuote) {
+            break;
+          } else {
+            filename += c;
+            i++;
+          }
+        }
+        appendError = filename;
+      } else {
+        if (currentArg.length > 0) {
+          args.push(currentArg);
+          currentArg = "";
+        }
+        i += 2;
+        while (i < commandLine.length && (commandLine[i] === ' ' || commandLine[i] === '\t')) {
+          i++;
+        }
+        let filename = "";
+        let inFileQuote = false;
+        let fileQuoteChar = null;
+        while (i < commandLine.length) {
+          const c = commandLine[i];
+          if ((c === '"' || c === "'") && !inFileQuote) {
+            inFileQuote = true;
+            fileQuoteChar = c;
+            i++;
+          } else if (c === fileQuoteChar && inFileQuote) {
+            inFileQuote = false;
+            fileQuoteChar = null;
+            i++;
+          } else if ((c === ' ' || c === '\t') && !inFileQuote) {
+            break;
+          } else {
+            filename += c;
+            i++;
+          }
+        }
+        redirectError = filename;
+      }
+    } else if (char === '1' && !inSingleQuote && !inDoubleQuote && i + 1 < commandLine.length && commandLine[i + 1] === '>') {
+      if (i + 2 < commandLine.length && commandLine[i + 2] === '>') {
+        if (currentArg.length > 0) {
+          args.push(currentArg);
+          currentArg = "";
+        }
+        i += 3;
+        while (i < commandLine.length && (commandLine[i] === ' ' || commandLine[i] === '\t')) {
+          i++;
+        }
+        let filename = "";
+        let inFileQuote = false;
+        let fileQuoteChar = null;
+        while (i < commandLine.length) {
+          const c = commandLine[i];
+          if ((c === '"' || c === "'") && !inFileQuote) {
+            inFileQuote = true;
+            fileQuoteChar = c;
+            i++;
+          } else if (c === fileQuoteChar && inFileQuote) {
+            inFileQuote = false;
+            fileQuoteChar = null;
+            i++;
+          } else if ((c === ' ' || c === '\t') && !inFileQuote) {
+            break;
+          } else {
+            filename += c;
+            i++;
+          }
+        }
+        appendOutput = filename;
+      } else {
+        if (currentArg.length > 0) {
+          args.push(currentArg);
+          currentArg = "";
+        }
+        i += 2;
+        while (i < commandLine.length && (commandLine[i] === ' ' || commandLine[i] === '\t')) {
+          i++;
+        }
+        let filename = "";
+        let inFileQuote = false;
+        let fileQuoteChar = null;
+        while (i < commandLine.length) {
+          const c = commandLine[i];
+          if ((c === '"' || c === "'") && !inFileQuote) {
+            inFileQuote = true;
+            fileQuoteChar = c;
+            i++;
+          } else if (c === fileQuoteChar && inFileQuote) {
+            inFileQuote = false;
+            fileQuoteChar = null;
+            i++;
+          } else if ((c === ' ' || c === '\t') && !inFileQuote) {
+            break;
+          } else {
+            filename += c;
+            i++;
+          }
+        }
+        redirectOutput = filename;
+      }
+    } else if ((char === " " || char === "\t") && !inSingleQuote && !inDoubleQuote) {
+      if (currentArg.length > 0) {
+        args.push(currentArg);
+        currentArg = "";
+      }
       i++;
     } else {
-      cleanArgs.push(args[i]);
+      currentArg += char;
+      i++;
     }
   }
-
-  return { cleanArgs, stdoutFile, stderrFile, append };
+  
+  if (currentArg.length > 0) {
+    args.push(currentArg);
+  }
+  
+  return { args, redirectOutput, redirectError, appendOutput, appendError };
 }
 
-function writeOutput({
-  stdoutText,
-  stdoutFile,
-  stderrText,
-  stderrFile,
-  append,
-}) {
-  if (stdoutFile) {
-    fs.writeFileSync(stdoutFile, stdoutText ? stdoutText + "\n" : "", {
-      flag: append ? "a" : "w",
-    });
-  } else if (stdoutText) {
-    process.stdout.write(stdoutText + "\n");
+function executeCommand(commandLine) {
+  const parsed = parseCommandLine(commandLine.trim());
+  const parts = parsed.args;
+  const redirectOutput = parsed.redirectOutput;
+  const redirectError = parsed.redirectError;
+  const appendOutput = parsed.appendOutput;
+  const appendError = parsed.appendError;
+  
+  if (parts.length === 0) {
+    return;
   }
-
-  if (stderrFile) {
-    fs.writeFileSync(stderrFile, stderrText ? stderrText + "\n" : "", {
-      flag: append ? "a" : "w",
-    });
-  } else if (stderrText) {
-    process.stderr.write(stderrText + "\n");
+  
+  const command = parts[0];
+  const args = parts.slice(1);
+  
+  const executablePath = findExecutableInPath(command);
+  
+  if (!executablePath) {
+    console.log(`${command}: command not found`);
+    return;
+  }
+  
+  const spawnOptions = {
+    argv0: command,
+  };
+  
+  let stdoutFd = 'inherit';
+  let stderrFd = 'inherit';
+  
+  try {
+    if (redirectOutput) {
+      const dir = path.dirname(redirectOutput);
+      if (dir && dir !== '.' && !fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      stdoutFd = fs.openSync(redirectOutput, 'w');
+    } else if (appendOutput) {
+      const dir = path.dirname(appendOutput);
+      if (dir && dir !== '.' && !fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      stdoutFd = fs.openSync(appendOutput, 'a');
+    }
+    
+    if (redirectError) {
+      const dir = path.dirname(redirectError);
+      if (dir && dir !== '.' && !fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      stderrFd = fs.openSync(redirectError, 'w');
+    } else if (appendError) {
+      const dir = path.dirname(appendError);
+      if (dir && dir !== '.' && !fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      stderrFd = fs.openSync(appendError, 'a');
+    }
+    
+    spawnOptions.stdio = ['inherit', stdoutFd, stderrFd];
+    
+    const result = spawnSync(executablePath, args, spawnOptions);
+    
+    if (result.error) {
+      console.log(`${command}: command not found`);
+    }
+  } finally {
+    // Close file descriptors to prevent leaks
+    if (typeof stdoutFd === 'number') {
+      fs.closeSync(stdoutFd);
+    }
+    if (typeof stderrFd === 'number') {
+      fs.closeSync(stderrFd);
+    }
   }
 }
+
+function prompt() {
+  rl.question("$ ", (command) => {
+    const trimmedCommand = command.trim();
+    
+    // Handle exit with optional code
+    if (trimmedCommand === "exit" || trimmedCommand.startsWith("exit ")) {
+      const parts = trimmedCommand.split(/\s+/);
+      const exitCode = parts.length > 1 ? parseInt(parts[1], 10) || 0 : 0;
+      process.exit(exitCode);
+    }
+    
+    // Handle pwd builtin
+    if (trimmedCommand === "pwd") {
+      console.log(process.cwd());
+      prompt();
+      return;
+    }
+    
+    // Handle cd builtin
+    if (trimmedCommand === "cd" || trimmedCommand.startsWith("cd ")) {
+      const parsed = parseCommandLine(trimmedCommand);
+      const parts = parsed.args;
+      
+      let targetDir;
+      if (parts.length === 1) {
+        // cd with no args goes to HOME
+        targetDir = process.env.HOME || '/';
+      } else if (parts[1] === '~') {
+        targetDir = process.env.HOME || '/';
+      } else if (parts[1].startsWith('~/')) {
+        targetDir = path.join(process.env.HOME || '/', parts[1].slice(2));
+      } else {
+        targetDir = parts[1];
+      }
+      
+      try {
+        process.chdir(targetDir);
+      } catch (err) {
+        console.log(`cd: ${targetDir}: No such file or directory`);
+      }
+      prompt();
+      return;
+    }
+    
+    // Handle echo builtin
+    if (trimmedCommand.startsWith("echo ") || trimmedCommand === "echo") {
+      const parsed = parseCommandLine(trimmedCommand);
+      const parts = parsed.args;
+      const redirectOutput = parsed.redirectOutput;
+      const redirectError = parsed.redirectError;
+      const appendOutput = parsed.appendOutput;
+      const appendError = parsed.appendError;
+      
+      let output = "";
+      if (parts.length > 1) {
+        output = parts.slice(1).join(" ");
+      }
+      
+      if (redirectOutput) {
+        const dir = path.dirname(redirectOutput);
+        if (dir && dir !== '.' && !fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+        fs.writeFileSync(redirectOutput, output + '\n');
+      } else if (appendOutput) {
+        const dir = path.dirname(appendOutput);
+        if (dir && dir !== '.' && !fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+        fs.appendFileSync(appendOutput, output + '\n');
+      } else {
+        console.log(output);
+      }
+      
+      if (redirectError) {
+        fs.writeFileSync(redirectError, '');
+      } else if (appendError) {
+        fs.appendFileSync(appendError, '');
+      }
+      
+      prompt();
+      return;
+    }
+    
+    // Handle type builtin
+    if (trimmedCommand.startsWith("type ")) {
+      const arg = trimmedCommand.slice(5).trim();
+      const builtins = ["cd", "echo", "exit", "pwd", "type"];
+      
+      if (builtins.includes(arg)) {
+        console.log(`${arg} is a shell builtin`);
+      } else {
+        const executablePath = findExecutableInPath(arg);
+        
+        if (executablePath) {
+          console.log(`${arg} is ${executablePath}`);
+        } else {
+          console.log(`${arg}: not found`);
+        }
+      }
+      prompt();
+      return;
+    }
+    
+    // Try to execute as external command
+    executeCommand(trimmedCommand);
+    
+    prompt();
+  });
+}
+
+// Start the REPL
+prompt();
