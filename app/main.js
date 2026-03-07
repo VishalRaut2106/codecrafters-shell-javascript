@@ -106,30 +106,97 @@ function findExecutable(cmd) {
   return null;
 }
 
+function parseRedirections(args) {
+  const cleanArgs = [];
+  let stdoutFile = null;
+  let stderrFile = null;
+  let stdoutAppend = false;
+  let stderrAppend = false;
+
+  for (let i = 0; i < args.length; i++) {
+    const token = args[i];
+    const next = args[i + 1];
+
+    if ((token === ">" || token === "1>") && next) {
+      stdoutFile = next;
+      stdoutAppend = false;
+      i++;
+      continue;
+    }
+
+    if ((token === ">>" || token === "1>>") && next) {
+      stdoutFile = next;
+      stdoutAppend = true;
+      i++;
+      continue;
+    }
+
+    if (token === "2>" && next) {
+      stderrFile = next;
+      stderrAppend = false;
+      i++;
+      continue;
+    }
+
+    if (token === "2>>" && next) {
+      stderrFile = next;
+      stderrAppend = true;
+      i++;
+      continue;
+    }
+
+    cleanArgs.push(token);
+  }
+
+  return { cleanArgs, stdoutFile, stderrFile, stdoutAppend, stderrAppend };
+}
+
+function writeStdout(text, redirect) {
+  if (redirect.stdoutFile) {
+    fs.writeFileSync(redirect.stdoutFile, `${text}\n`, {
+      flag: redirect.stdoutAppend ? "a" : "w",
+    });
+    return;
+  }
+  process.stdout.write(`${text}\n`);
+}
+
+function writeStderr(text, redirect) {
+  if (redirect.stderrFile) {
+    fs.writeFileSync(redirect.stderrFile, `${text}\n`, {
+      flag: redirect.stderrAppend ? "a" : "w",
+    });
+    return;
+  }
+  process.stderr.write(`${text}\n`);
+}
+
 function prompt() {
   rl.question("$ ", (command) => {
     command = command.trim();
     const [cmd, ...args] = command.split(/\s+/);
+    const redirect = parseRedirections(args);
+    const commandArgs = redirect.cleanArgs;
 
-    if (cmd === "exit" && (args.length === 0 || args[0] === "0")) {
+    if (cmd === "exit" && (commandArgs.length === 0 || commandArgs[0] === "0")) {
       rl.close();
     } else if (cmd === "echo") {
-      console.log(args.join(" "));
+      writeStdout(commandArgs.join(" "), redirect);
       prompt();
     } else if (cmd === "type") {
-      let target = args[0];
+      let target = commandArgs[0];
 
       if (builtins.includes(target)) {
-        console.log(`${target} is a shell builtin`);
+        writeStdout(`${target} is a shell builtin`, redirect);
         prompt();
         return;
       }
 
       const fullPath = findExecutable(target);
       if (fullPath) {
-        console.log(`${target} is ${fullPath}`);
+        writeStdout(`${target} is ${fullPath}`, redirect);
       } else {
-        console.log(`${target}: not found`);
+        writeStdout(`${target}: not found`, redirect);
       }
 
       prompt();
@@ -163,12 +230,46 @@ function prompt() {
     } else {
       const fullPath = findExecutable(cmd);
       if (fullPath) {
-        const child = spawn(fullPath, args, { stdio: "inherit", argv0: cmd });
+        let outFd = null;
+        let errFd = null;
+
+        try {
+          if (redirect.stdoutFile) {
+            outFd = fs.openSync(redirect.stdoutFile, redirect.stdoutAppend ? "a" : "w");
+          }
+          if (redirect.stderrFile) {
+            errFd = fs.openSync(redirect.stderrFile, redirect.stderrAppend ? "a" : "w");
+          }
+        } catch (err) {
+          if (outFd !== null) fs.closeSync(outFd);
+          if (errFd !== null) fs.closeSync(errFd);
+          writeStderr(err.message, {
+            stderrFile: null,
+            stderrAppend: false,
+          });
+          prompt();
+          return;
+        }
+
+        const stdio = ["inherit", outFd !== null ? outFd : "inherit", errFd !== null ? errFd : "inherit"];
+
+        const child = spawn(fullPath, commandArgs, { stdio, argv0: cmd });
         child.on("exit", () => {
+          if (outFd !== null) fs.closeSync(outFd);
+          if (errFd !== null) fs.closeSync(errFd);
+          prompt();
+        });
+        child.on("error", (err) => {
+          if (outFd !== null) fs.closeSync(outFd);
+          if (errFd !== null) fs.closeSync(errFd);
+          writeStderr(err.message, {
+            stderrFile: null,
+            stderrAppend: false,
+          });
           prompt();
         });
       } else {
-        console.log(`${cmd}: command not found`);
+        writeStdout(`${cmd}: command not found`, redirect);
         prompt();
       }
     }
