@@ -151,6 +151,100 @@ function parseRedirections(args) {
   return { cleanArgs, stdoutFile, stderrFile, stdoutAppend, stderrAppend };
 }
 
+function tokenizeCommand(input) {
+  const tokens = [];
+  let current = "";
+  let inSingle = false;
+  let inDouble = false;
+
+  const pushCurrent = () => {
+    if (current.length > 0) {
+      tokens.push(current);
+      current = "";
+    }
+  };
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+
+    if (inSingle) {
+      if (ch === "'") {
+        inSingle = false;
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+
+    if (inDouble) {
+      if (ch === '"') {
+        inDouble = false;
+      } else if (ch === "\\" && i + 1 < input.length) {
+        const next = input[i + 1];
+        if (["\\", '"', "$", "`"].includes(next)) {
+          current += next;
+          i++;
+        } else {
+          current += "\\";
+        }
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+
+    if (ch === "'") {
+      inSingle = true;
+      continue;
+    }
+
+    if (ch === '"') {
+      inDouble = true;
+      continue;
+    }
+
+    if (ch === "\\" && i + 1 < input.length) {
+      current += input[i + 1];
+      i++;
+      continue;
+    }
+
+    if (/\s/.test(ch)) {
+      pushCurrent();
+      continue;
+    }
+
+    if (ch === "|") {
+      pushCurrent();
+      tokens.push("|");
+      continue;
+    }
+
+    if (ch === ">") {
+      let prefix = "";
+      if (current === "1" || current === "2") {
+        prefix = current;
+        current = "";
+      } else {
+        pushCurrent();
+      }
+
+      if (i + 1 < input.length && input[i + 1] === ">") {
+        tokens.push(`${prefix}>>`);
+        i++;
+      } else {
+        tokens.push(`${prefix}>`);
+      }
+      continue;
+    }
+
+    current += ch;
+  }
+
+  pushCurrent();
+  return tokens;
+}
+
 function writeStdout(text, redirect) {
   if (redirect.stdoutFile) {
     fs.writeFileSync(redirect.stdoutFile, `${text}\n`, {
@@ -174,7 +268,45 @@ function writeStderr(text, redirect) {
 function prompt() {
   rl.question("$ ", (command) => {
     command = command.trim();
-    const [cmd, ...args] = command.split(/\s+/);
+    const tokens = tokenizeCommand(command);
+    if (tokens.length === 0) {
+      prompt();
+      return;
+    }
+
+    if (tokens.includes("|")) {
+      const pipeIndex = tokens.indexOf("|");
+      const left = tokens.slice(0, pipeIndex);
+      const right = tokens.slice(pipeIndex + 1);
+      const [cmd1, ...args1] = left;
+      const [cmd2, ...args2] = right;
+
+      const fullPath1 = findExecutable(cmd1);
+      const fullPath2 = findExecutable(cmd2);
+
+      if (!fullPath1 || !fullPath2) {
+        console.log(`${!fullPath1 ? cmd1 : cmd2}: command not found`);
+        prompt();
+        return;
+      }
+
+      const child1 = spawn(fullPath1, args1, {
+        stdio: ["inherit", "pipe", "inherit"],
+        argv0: cmd1,
+      });
+      const child2 = spawn(fullPath2, args2, {
+        stdio: ["pipe", "inherit", "inherit"],
+        argv0: cmd2,
+      });
+
+      child1.stdout.pipe(child2.stdin);
+      child2.on("exit", () => {
+        prompt();
+      });
+      return;
+    }
+
+    const [cmd, ...args] = tokens;
     const redirect = parseRedirections(args);
     const commandArgs = redirect.cleanArgs;
 
@@ -200,33 +332,6 @@ function prompt() {
       }
 
       prompt();
-    } else if (command.includes("|")) {
-      const [leftCmd, rightCmd] = command.split("|").map((s) => s.trim());
-      const [cmd1, ...args1] = leftCmd.split(/\s+/);
-      const [cmd2, ...args2] = rightCmd.split(/\s+/);
-
-      const fullPath1 = findExecutable(cmd1);
-      const fullPath2 = findExecutable(cmd2);
-
-      if (!fullPath1 || !fullPath2) {
-        console.log(`${!fullPath1 ? cmd1 : cmd2}: command not found`);
-        prompt();
-        return;
-      }
-
-      const child1 = spawn(fullPath1, args1, {
-        stdio: ["inherit", "pipe", "inherit"],
-        argv0: cmd1,
-      });
-      const child2 = spawn(fullPath2, args2, {
-        stdio: ["pipe", "inherit", "inherit"],
-        argv0: cmd2,
-      });
-
-      child1.stdout.pipe(child2.stdin);
-      child2.on("exit", () => {
-        prompt();
-      });
     } else {
       const fullPath = findExecutable(cmd);
       if (fullPath) {
