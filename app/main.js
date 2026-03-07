@@ -28,70 +28,62 @@ rl.on("line", (input) => {
 });
 
 function getCmd(answer) {
-  let cmd;
-  let endIndex = 1;
+  const tokens = [];
+  let current = "";
+  let inSingle = false;
+  let inDouble = false;
 
-  if (answer[0] === '"' || answer[0] === "'") {
-    const quoteChar = answer[0];
-    while (endIndex < answer.length && answer[endIndex] !== quoteChar) {
-      endIndex++;
+  for (let i = 0; i < answer.length; i++) {
+    const ch = answer[i];
+
+    if (inSingle) {
+      if (ch === "'") {
+        inSingle = false;
+      } else {
+        current += ch;
+      }
+      continue;
     }
-    cmd = answer.slice(1, endIndex);
-  } else {
-    while (endIndex < answer.length && !/\s/.test(answer[endIndex])) {
-      endIndex++;
-    }
-    cmd = answer.slice(0, endIndex);
-  }
 
-  let quoteChar = null;
-  let currentArg = "";
-  const args = [];
-
-  for (let i = endIndex + 1; i < answer.length; i++) {
-    const char = answer[i];
-
-    if (quoteChar) {
-      if (char === quoteChar) {
-        quoteChar = null;
-      } else if (char === "\\" && quoteChar === '"') {
-        i++;
-        if (i < answer.length) {
-          const nextChar = answer[i];
-          const allowedEscapes = ['"', "\\"];
-          if (allowedEscapes.includes(nextChar)) {
-            currentArg += nextChar;
-          } else {
-            currentArg += "\\" + nextChar;
-          }
+    if (inDouble) {
+      if (ch === '"') {
+        inDouble = false;
+      } else if (ch === "\\" && i + 1 < answer.length) {
+        const next = answer[i + 1];
+        if (["\\", '"', "$", "`"].includes(next)) {
+          current += next;
+          i++;
+        } else {
+          current += "\\";
         }
       } else {
-        currentArg += char;
+        current += ch;
+      }
+      continue;
+    }
+
+    if (ch === "'") {
+      inSingle = true;
+    } else if (ch === '"') {
+      inDouble = true;
+    } else if (ch === "\\" && i + 1 < answer.length) {
+      current += answer[i + 1];
+      i++;
+    } else if (/\s/.test(ch)) {
+      if (current.length > 0) {
+        tokens.push(current);
+        current = "";
       }
     } else {
-      if (char === "\\") {
-        i++;
-        if (i < answer.length) {
-          currentArg += answer[i];
-        }
-      } else if (char === '"' || char === "'") {
-        quoteChar = char;
-      } else if (/\s/.test(char)) {
-        if (currentArg.length > 0) {
-          args.push(currentArg);
-          currentArg = "";
-        }
-      } else {
-        currentArg += char;
-      }
+      current += ch;
     }
   }
 
-  if (currentArg.length > 0) {
-    args.push(currentArg);
+  if (current.length > 0) {
+    tokens.push(current);
   }
 
-  return { cmd, args };
+  return { cmd: tokens[0] || "", args: tokens.slice(1) };
 }
 
 function execCmd(command) {
@@ -124,7 +116,7 @@ function execCmd(command) {
     } else {
       const execPath = findExecutable(cmd);
       if (!execPath) {
-        console.log(`${command}: command not found`);
+        console.log(`${cmd}: command not found`);
         return resolve();
       }
 
