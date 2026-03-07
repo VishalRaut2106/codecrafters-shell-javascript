@@ -298,111 +298,12 @@ rl.on("line", (line) => {
   }
   stages.push(currentStage);
 
-  if (stages.length === 1) {
-    const tokens = stages[0];
-    let stdoutFile = null;
-    let stdoutAppend = false;
-    let stderrFile = null;
-    let stderrAppend = false;
-    const filteredArgs = [];
-    for (let i = 0; i < tokens.length; i++) {
-      const token = tokens[i];
-      if (token === ">" || token === "1>") {
-        stdoutFile = tokens[++i];
-        stdoutAppend = false;
-      } else if (token === ">>" || token === "1>>") {
-        stdoutFile = tokens[++i];
-        stdoutAppend = true;
-      } else if (token === "2>") {
-        stderrFile = tokens[++i];
-        stderrAppend = false;
-      } else if (token === "2>>") {
-        stderrFile = tokens[++i];
-        stderrAppend = true;
-      } else {
-        filteredArgs.push(token);
-      }
-    }
+  const { spawn } = require("child_process");
+  const { PassThrough } = require("stream");
 
-    const [command, ...args] = filteredArgs;
+  let prevStdout = null;
 
-    if (stdoutFile) {
-      const dir = path.dirname(stdoutFile);
-      if (dir !== ".") fs.mkdirSync(dir, { recursive: true });
-      if (!stdoutAppend || !fs.existsSync(stdoutFile))
-        fs.writeFileSync(stdoutFile, "");
-    }
-    if (stderrFile) {
-      const dir = path.dirname(stderrFile);
-      if (dir !== ".") fs.mkdirSync(dir, { recursive: true });
-      if (!stderrAppend || !fs.existsSync(stderrFile))
-        fs.writeFileSync(stderrFile, "");
-    }
-
-    const writeOutput = (text) => {
-      if (stdoutFile) fs.appendFileSync(stdoutFile, text + "\n");
-      else console.log(text);
-    };
-    const writeError = (text) => {
-      if (stderrFile) fs.appendFileSync(stderrFile, text + "\n");
-      else console.error(text);
-    };
-
-    if (command === "exit") {
-      process.exit(0);
-    } else if (command === "echo") {
-      writeOutput(args.join(" "));
-      rl.prompt();
-    } else if (command === "type") {
-      const target = args[0];
-      if (builtins.includes(target))
-        writeOutput(`${target} is a shell builtin`);
-      else {
-        const fullPath = findInPath(target);
-        if (fullPath) writeOutput(`${target} is ${fullPath}`);
-        else writeOutput(`${target}: not found`);
-      }
-      rl.prompt();
-    } else if (command === "pwd") {
-      writeOutput(process.cwd());
-      rl.prompt();
-    } else if (command === "cd") {
-      let dir = args[0];
-      if (dir === "~") dir = process.env.HOME;
-      try {
-        process.chdir(dir);
-      } catch (e) {
-        writeError(`cd: ${args[0]}: No such file or directory`);
-      }
-      rl.prompt();
-    } else {
-      const fullPath = findInPath(command);
-      if (fullPath) {
-        const { spawnSync } = require("child_process");
-        let stdio = ["inherit", "inherit", "inherit"];
-        let fds = [];
-        if (stdoutFile) {
-          const fd = fs.openSync(stdoutFile, stdoutAppend ? "a" : "w");
-          stdio[1] = fd;
-          fds.push(fd);
-        }
-        if (stderrFile) {
-          const fd = fs.openSync(stderrFile, stderrAppend ? "a" : "w");
-          stdio[2] = fd;
-          fds.push(fd);
-        }
-        spawnSync(fullPath, args, { stdio, argv0: command });
-        for (const fd of fds) fs.closeSync(fd);
-      } else {
-        writeError(`${command}: command not found`);
-      }
-      rl.prompt();
-    }
-  } else {
-    // Pipeline support
-    const { spawn } = require("child_process");
-    let prevChild = null;
-
+  async function runStages() {
     for (let i = 0; i < stages.length; i++) {
       const tokens = stages[i];
       let stdoutFile = null;
@@ -428,45 +329,112 @@ rl.on("line", (line) => {
       }
 
       const [cmd, ...cargs] = filtered;
-      const fPath = findInPath(cmd);
-      if (!fPath) {
-        process.stderr.write(`${cmd}: command not found\n`);
-        continue;
-      }
+      let stdout = i === stages.length - 1 ? process.stdout : "pipe";
+      let stderr = process.stderr;
 
-      let stdio = [prevChild ? prevChild.stdout : "inherit", "pipe", "inherit"];
-      if (i === stages.length - 1) stdio[1] = "inherit";
-
-      let fds = [];
+      let outFd = null;
       if (stdoutFile) {
         const dir = path.dirname(stdoutFile);
         if (dir !== ".") fs.mkdirSync(dir, { recursive: true });
-        const fd = fs.openSync(stdoutFile, stdoutAppend ? "a" : "w");
-        stdio[1] = fd;
-        fds.push(fd);
+        outFd = fs.openSync(stdoutFile, stdoutAppend ? "a" : "w");
+        stdout = outFd;
       }
+      let errFd = null;
       if (stderrFile) {
         const dir = path.dirname(stderrFile);
         if (dir !== ".") fs.mkdirSync(dir, { recursive: true });
-        const fd = fs.openSync(stderrFile, stderrAppend ? "a" : "w");
-        stdio[2] = fd;
-        fds.push(fd);
+        errFd = fs.openSync(stderrFile, stderrAppend ? "a" : "w");
+        stderr = errFd;
       }
 
-      const child = spawn(fPath, cargs, { stdio, argv0: cmd });
-      if (prevChild) prevChild.stdout.unref(); // Avoid hanging on previous stage's stdout
+      if (builtins.includes(cmd)) {
+        if (cmd === "exit") process.exit(0);
 
-      prevChild = child;
+        const out = new PassThrough();
+        const write = (msg) => {
+          if (
+            stdout instanceof fs.WriteStream ||
+            typeof stdout === "number" ||
+            stdout === process.stdout
+          ) {
+            if (typeof stdout === "number") fs.writeSync(stdout, msg + "\n");
+            else if (stdout === process.stdout)
+              process.stdout.write(msg + "\n");
+            else stdout.write(msg + "\n");
+          } else {
+            out.write(msg + "\n");
+          }
+        };
 
-      if (i === stages.length - 1) {
-        child.on("exit", () => {
-          for (const fd of fds)
-            try {
-              fs.closeSync(fd);
-            } catch (e) {}
-          rl.prompt();
-        });
+        if (cmd === "echo") write(cargs.join(" "));
+        else if (cmd === "pwd") write(process.cwd());
+        else if (cmd === "type") {
+          const target = cargs[0];
+          if (builtins.includes(target)) write(`${target} is a shell builtin`);
+          else {
+            const fPath = findInPath(target);
+            if (fPath) write(`${target} is ${fPath}`);
+            else write(`${target}: not found`);
+          }
+        } else if (cmd === "cd") {
+          let dir = cargs[0];
+          if (dir === "~") dir = process.env.HOME;
+          try {
+            process.chdir(dir);
+          } catch (e) {
+            const msg = `cd: ${cargs[0]}: No such file or directory`;
+            if (typeof stderr === "number") fs.writeSync(stderr, msg + "\n");
+            else stderr.write(msg + "\n");
+          }
+        }
+
+        out.end();
+        prevStdout = out;
+        if (outFd) fs.closeSync(outFd);
+        if (errFd) fs.closeSync(errFd);
+
+        if (i === stages.length - 1) rl.prompt();
+      } else {
+        const fullPath = findInPath(cmd);
+        if (!fullPath) {
+          const msg = `${cmd}: command not found\n`;
+          process.stderr.write(msg);
+          prevStdout = new PassThrough();
+          prevStdout.end();
+          if (i === stages.length - 1) rl.prompt();
+          continue;
+        }
+
+        const stdio = [
+          prevStdout ? "pipe" : "inherit",
+          stdout === process.stdout
+            ? "inherit"
+            : typeof stdout === "number"
+              ? stdout
+              : "pipe",
+          stderr === process.stderr
+            ? "inherit"
+            : typeof stderr === "number"
+              ? stderr
+              : "pipe",
+        ];
+        const child = spawn(fullPath, cargs, { stdio, argv0: cmd });
+
+        if (prevStdout) prevStdout.pipe(child.stdin);
+
+        if (stdio[1] === "pipe") prevStdout = child.stdout;
+        else prevStdout = null;
+
+        if (i === stages.length - 1) {
+          child.on("exit", () => {
+            if (outFd) fs.closeSync(outFd);
+            if (errFd) fs.closeSync(errFd);
+            rl.prompt();
+          });
+        }
       }
     }
   }
+
+  runStages();
 });
