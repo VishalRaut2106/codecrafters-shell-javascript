@@ -1,124 +1,100 @@
-import readline from "readline";
-import fs from "fs";
-import path from "path";
-import { spawnSync } from "child_process";
+const readline = require("readline");
+const fs = require('fs');
+const path = require('path');
+const { spawnSync} = require('child_process');
 
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
 });
 
-rl.setPrompt("$ ");
-rl.prompt();
-
-const builtinCommands = {
-  exit: handleExit,
-  echo: handleEcho,
-  type: handleType,
-  pwd: handlePwd,
-  cd: handleCd,
-};
-
-function handleExit() {
-  process.exit(0);
+const builtInCommands = {
+  echo: true,
+  exit: true,
+  type: true,
+  pwd: true,
+  cd: true,
 }
 
-function handleEcho(args) {
-  if (args.length > 0) {
-    console.log(args.join(" "));
-  } else {
-    console.log("Nothing to echo.");
-  }
+const handleExit = () => {
+  rl.close();
 }
 
-
-function searchExecutable(command, args, shouldExecute) {
-  const directories = process.env.PATH.split(path.delimiter);
-  for (const directory of directories) {
-    try {
-      const fullPath = path.join(directory, command);
-      fs.accessSync(fullPath, fs.constants.X_OK);
-      if (!shouldExecute) console.log(`${command} is ${fullPath}`);
-      else {
-        spawnSync(fullPath, args, {
-          stdio: "inherit",
-          argv0: command,
-        });
-      }
-      return true;
-    } catch (error) {}
-  }
-  return false;
+const handleEcho = (args) => {
+  const output = args.join(' ');
+  console.log(output);
 }
 
-function handleType(args) {
-  const command = args[0];
-  if (builtinCommands[command]) return console.log(`${command} is a shell builtin`);
-  else {
-    if (!searchExecutable(command, null, false)) console.log(`${command}: not found`);
-  }
-}
-
-function handlePwd() {
+const handlePwd = () => {
   console.log(process.cwd());
 }
 
-
-function handleCd(args) {
-  const directory = args[0];
+const handleCd = (path) => {
   try {
-    if (directory === "~") process.chdir(process.env.HOME);
-    else process.chdir(directory);
-  } catch (error) {
-    console.log(`cd: ${directory}: No such file or directory`);
+    process.chdir(path[0] === '~' ? process.env.HOME : path);
+  } catch {
+    console.log(`cd: ${path}: No such file or directory`)
   }
 }
 
-function parseCommandLine(input) {
-  const tokens = [];
-  let current = "";
-  let inSingleQuotes = false;
+const getPaths = () => process.env.PATH.split(path.delimiter);
 
-  for (let index = 0; index < input.length; index += 1) {
-    const char = input[index];
-
-    if (char === "'") {
-      inSingleQuotes = !inSingleQuotes;
-      continue;
-    }
-
-    if (char === " " && !inSingleQuotes) {
-      if (current.length > 0) {
-        tokens.push(current);
-        current = "";
-      }
-      continue;
-    }
-
-    current += char;
-  }
-
-  if (current.length > 0) {
-    tokens.push(current);
-  }
-
-  return tokens;
-}
-
-rl.on("line", (command) => {
-  const parts = parseCommandLine(command.trim());
-  if (parts.length === 0) {
-    rl.prompt();
+const handleType = (command) => {
+  if (command in builtInCommands) {
+    console.log(`${command} is a shell builtin`);
     return;
   }
 
-  const cmd = parts[0];
-  const args = parts.slice(1);
+  const paths = getPaths();
 
-  if (builtinCommands[cmd]) {
-    builtinCommands[cmd](args);
-  } else {
-    if (!searchExecutable(cmd, args, true)) console.log(`${cmd}: not found`);
+  for (const concretePath of paths) {
+    const accessPath = `${concretePath}/${command}`;
+
+    try {
+      fs.accessSync(accessPath, fs.constants.F_OK | fs.constants.X_OK);
+      console.log(`${command} is ${accessPath}`);
+      return;
+    } catch (err) {}
   }
-  rl.prompt();
-});
+
+  console.log(`${command}: not found`);
+}
+
+const handleCommands = (answer) => {
+  const args = answer.match(/(?:[^\s'"]+|'[^']*'|"[^"]*")+/g) || [];
+  const command = args.shift().replace(/['"]/g, '');
+  const cleanedArgs = args.map(arg => arg.replace(/'([^']*)'|"([^"]*)"/g, (_, p1, p2) => p1 ?? p2));
+
+  switch (command) {
+    case 'exit':
+      handleExit();
+      return true;
+    case 'echo':
+      handleEcho(cleanedArgs);
+      return false;
+    case 'pwd':
+      handlePwd();
+      return false;
+    case 'cd':
+      handleCd(cleanedArgs.join(''))
+      return false;
+    case 'type':
+      handleType(args[0]);
+      return false;
+    default:
+      const { status } = spawnSync(command, cleanedArgs, { encoding: 'utf-8', stdio: 'inherit' });
+      if (status !== 0) {
+        console.log(`${command}: command not found`);
+      }
+      return false;
+  }
+}
+
+const recursiveQuestion = () => {
+  rl.question("$ ", (answer) => {
+    const isClosed = handleCommands(answer);
+    if (!isClosed) recursiveQuestion();
+  });
+};
+
+recursiveQuestion();
