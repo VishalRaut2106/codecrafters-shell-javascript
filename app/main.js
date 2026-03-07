@@ -138,21 +138,15 @@ function getCmd(answer) {
 
 function execCmd(command) {
   return new Promise((resolve) => {
+    const pipelineStages = splitPipelineStages(command);
+    if (pipelineStages.length > 1) {
+      runPipelineStages(pipelineStages, resolve);
+      return;
+    }
+
     const { cmd, args } = getCmd(command);
     const { cleanArgs, stdoutFile, stderrFile, append } =
       parseRedirection(args);
-
-    const pipeIndex = cleanArgs.indexOf("|");
-    if (pipeIndex !== -1) {
-      const leftCmd = [cmd, ...cleanArgs.slice(0, pipeIndex)].join(" ");
-      const rightCmd = cleanArgs.slice(pipeIndex + 1).join(" ");
-      if (leftCmd.length === 0 || rightCmd.length === 0) {
-        console.log("Invalid pipeline");
-        return resolve();
-      }
-      runPipeline(leftCmd, rightCmd, resolve);
-      return;
-    }
 
     if (cmd === "exit") {
       process.exit(0);
@@ -216,6 +210,56 @@ function execCmd(command) {
       });
     }
   });
+}
+
+function splitPipelineStages(input) {
+  const stages = [];
+  let current = "";
+  let inSingle = false;
+  let inDouble = false;
+  let escaped = false;
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+
+    if (escaped) {
+      current += ch;
+      escaped = false;
+      continue;
+    }
+
+    if (ch === "\\" && !inSingle) {
+      escaped = true;
+      current += ch;
+      continue;
+    }
+
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+      current += ch;
+      continue;
+    }
+
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+      current += ch;
+      continue;
+    }
+
+    if (ch === "|" && !inSingle && !inDouble) {
+      stages.push(current.trim());
+      current = "";
+      continue;
+    }
+
+    current += ch;
+  }
+
+  if (current.trim().length > 0) {
+    stages.push(current.trim());
+  }
+
+  return stages;
 }
 
 /* cd */
@@ -321,35 +365,64 @@ function writeOutput({
   }
 }
 
-function runPipeline(leftCmd, rightCmd, resolve) {
-  const leftExec = findExecutable(getCmd(leftCmd).cmd);
-  const rightExec = findExecutable(getCmd(rightCmd).cmd);
-
-  if (!leftExec || !rightExec) {
-    console.log(`command not found`);
-    return resolve();
+function runPipelineStages(stageCommands, resolve) {
+  if (stageCommands.length < 2) {
+    resolve();
+    return;
   }
 
-  const leftChild = spawn(leftExec, getCmd(leftCmd).args, {
-    stdio: ["inherit", "pipe", "inherit"],
-  });
-  const rightChild = spawn(rightExec, getCmd(rightCmd).args, {
-    stdio: ["pipe", "inherit", "inherit"],
-  });
+  let prevStdout = null;
+  let lastChild = null;
 
-  leftChild.stdout.pipe(rightChild.stdin);
+  for (let i = 0; i < stageCommands.length; i++) {
+    const stage = stageCommands[i];
+    const { cmd, args } = getCmd(stage);
+    const { cleanArgs } = parseRedirection(args);
 
-  leftChild.on("error", (err) => {
-    console.error(`Error executing left command: ${err.message}`);
+    const execPath = findExecutable(cmd);
+    if (!execPath) {
+      console.log(`${cmd}: command not found`);
+      resolve();
+      return;
+    }
+
+    const isLast = i === stageCommands.length - 1;
+    const stdio = [prevStdout ? "pipe" : "inherit", isLast ? "inherit" : "pipe", "inherit"];
+    const child = spawn(execPath, cleanArgs, { stdio, argv0: cmd });
+
+    child.on("error", (err) => {
+      if (err && err.code !== "EPIPE") {
+        console.error(`${cmd}: ${err.message}`);
+      }
+      resolve();
+    });
+
+    if (prevStdout) {
+      prevStdout.on("error", (err) => {
+        if (!err || err.code !== "EPIPE") {
+          // Ignore expected broken pipe behavior from short-lived downstream commands.
+        }
+      });
+      if (child.stdin) {
+        child.stdin.on("error", (err) => {
+          if (!err || err.code !== "EPIPE") {
+            // Ignore expected broken pipe behavior from short-lived downstream commands.
+          }
+        });
+      }
+      prevStdout.pipe(child.stdin);
+    }
+
+    prevStdout = child.stdout;
+    lastChild = child;
+  }
+
+  if (!lastChild) {
     resolve();
-  });
+    return;
+  }
 
-  rightChild.on("error", (err) => {
-    console.error(`Error executing right command: ${err.message}`);
-    resolve();
-  });
-
-  rightChild.on("exit", () => {
+  lastChild.on("exit", () => {
     resolve();
   });
 }
