@@ -4,6 +4,9 @@ const path = require("path");
 const { spawn } = require("child_process");
 
 const builtins = ["echo", "type", "exit", "pwd", "cd"];
+let lastTabLine = "";
+let lastTabMatchesKey = "";
+let rl;
 
 function getLongestCommonPrefix(items) {
   if (items.length === 0) return "";
@@ -44,24 +47,44 @@ function getCommandCompletions(prefix) {
     .sort((a, b) => a.localeCompare(b));
 }
 
-const rl = readline.createInterface({
+rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
   completer: (line) => {
     const matches = getCommandCompletions(line);
     if (matches.length === 0) {
+      lastTabLine = "";
+      lastTabMatchesKey = "";
       process.stdout.write("\x07");
       return [[], line];
     }
     if (matches.length === 1) {
+      lastTabLine = "";
+      lastTabMatchesKey = "";
       return [[matches[0] + " "], line];
     }
     const commonPrefix = getLongestCommonPrefix(matches);
     if (commonPrefix.length > line.length) {
+      lastTabLine = "";
+      lastTabMatchesKey = "";
       return [[commonPrefix], line];
     }
+
+    const matchesKey = matches.join("\0");
+    if (lastTabLine === line && lastTabMatchesKey === matchesKey) {
+      process.stdout.write(`\n${matches.join("  ")}\n`);
+      if (typeof rl._refreshLine === "function") {
+        rl._refreshLine();
+      }
+      lastTabLine = "";
+      lastTabMatchesKey = "";
+      return [[], line];
+    }
+
+    lastTabLine = line;
+    lastTabMatchesKey = matchesKey;
     process.stdout.write("\x07");
-    return [matches, line];
+    return [[], line];
   },
 });
 
