@@ -1,14 +1,10 @@
 const readline = require("readline");
 const fs = require("fs");
 const path = require("path");
+const { KNOWN_COMMANDS } = require("./functions/type");
+const { completer } = require("./readline/completer");
 
-const builtins = ["echo", "exit", "type", "pwd", "cd"];
-
-function completer(line) {
-  const completions = ["echo", "exit"];
-  const hits = completions.filter((c) => c.startsWith(line));
-  return [hits.length ? hits.map((h) => h + " ") : [], line];
-}
+const builtins = KNOWN_COMMANDS;
 
 const rl = readline.createInterface({
   input: process.stdin,
