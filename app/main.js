@@ -1,136 +1,268 @@
-import readline from "readline";
-import path from "path";
-import { spawn } from "child_process";
-import fs from "fs";
-
-const built_in_commands = new Set(["echo", "type", "exit", "pwd", "cd"]);
-const process_path = process.env.PATH;
+const readline = require("readline");
+const fs = require("fs");
+const pathModule = require("path");
+const { spawnSync } = require("child_process");
+const os = require("os");
 
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
+  prompt: "$ ",
 });
 
-function process_command() {
-  return new Promise((resolve) => {
-    rl.question("$ ", resolve);
-  });
-}
+let outputFile = null;
 
-async function main() {
-  while (true) {
-    const answer = await process_command();
-    if (answer === "exit") {
-      process.exit(0);
-    }
-    const argv = split_into_argv(answer);
-    const command = argv[0];
-    const args = argv.slice(1).join(" ");
-    switch (command) {
-      case "echo":
-        console.log(args);
-        break;
-      case "type":
-        if (built_in_commands.has(args)) {
-          console.log(`${args} is a shell builtin`);
-        } else {
-          await check_valid_type(args);
-        }
-        break;
-      case "pwd":
-        console.log(process.cwd());
-        break;
-      case "cd":
-        try {
-          if (args === "~") process.chdir(process.env.HOME);
-          else process.chdir(args);
-        } catch (err) {
-          console.error(`${args}: No such file or directory`);
-        }
-        break;
-      default:
-        await handle_external_function(command, argv.slice(1));
-    }
+/** CONSTANTS */
+const COMMANDS = {
+  EXIT: "exit",
+  ECHO: "echo",
+  TYPE: "type",
+  PWD: "pwd",
+  CD: "cd",
+};
+
+/** UTILITY FUNCTIONS */
+function print(text) {
+  if (outputFile) {
+    const fd = fs.openSync(outputFile, "w");
+    fs.writeFileSync(fd, text + "\n");
+    fs.closeSync(fd);
+    return;
   }
+  console.log(text);
 }
 
-function split_into_argv(input) {
+function prompt() {
+  rl.prompt();
+}
+
+function findCommand(command) {
+  for (const p of process.env.PATH.split(":")) {
+    const commandPath = pathModule.join(p, command);
+    try {
+      fs.accessSync(commandPath, fs.constants.X_OK);
+      return commandPath;
+    } catch (e) { }
+  }
+  return null;
+}
+
+function replaceTilda(path) {
+  if (path === "~") {
+    return os.homedir();
+  }
+  if (path.startsWith("~/")) {
+    return pathModule.join(os.homedir(), path.slice(2));
+  }
+  return path;
+}
+
+function parseArguments(line) {
   const tokens = [];
   let current = "";
-  let inSingle = false;
-  let inDouble = false;
-  let i = 0;
+  let inSingleQuotes = false;
+  let inDoubleQuotes = false;
+  let inQuotes = false;
 
-  while (i < input.length) {
-    const ch = input[i];
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
 
-    if (inSingle) {
-      if (ch === "'") inSingle = false;
-      else current += ch;
-    } else if (inDouble) {
-      if (ch === '"') {
-        inDouble = false;
-      } else if (
-        ch === "\\" &&
-        i + 1 < input.length &&
-        `"\\$\``.includes(input[i + 1])
-      ) {
-        current += input[++i]; // only escape special chars in double quotes
-      } else {
-        current += ch;
+    if (char === "\\" && i + 1 < line.length) {
+      // In single quotes, backslash is literal
+      if (inSingleQuotes) {
+        current += char;
+        continue;
       }
-    } else if (ch === "\\" && i + 1 < input.length) {
-      current += input[++i]; // escape next char literally outside quotes
-    } else if (ch === "'") {
-      inSingle = true;
-    } else if (ch === '"') {
-      inDouble = true;
-    } else if (ch === " ") {
-      if (current.length > 0) {
+
+      // In double quotes, only certain characters (",\,$,`) can be escaped
+      if (inDoubleQuotes) {
+        const nextChar = line[i + 1];
+        if (
+          nextChar === '"' ||
+          nextChar === "\\" ||
+          nextChar === "$" ||
+          nextChar === "`"
+        ) {
+          current += nextChar;
+          i++;
+        } else {
+          current += char;
+        }
+        continue;
+      }
+
+      // Outside quotes, backslash escapes the next character
+      current += line[i + 1];
+      i++;
+      continue;
+    }
+
+    if (char === '"') {
+      if (inSingleQuotes) {
+        current += char;
+        continue;
+      }
+      inDoubleQuotes = !inDoubleQuotes;
+      inQuotes = inDoubleQuotes || inSingleQuotes;
+      continue;
+    }
+
+    if (char === "'") {
+      if (inDoubleQuotes) {
+        current += char;
+        continue;
+      }
+      inSingleQuotes = !inSingleQuotes;
+      inQuotes = inDoubleQuotes || inSingleQuotes;
+      continue;
+    }
+
+    if (char === " " && !inQuotes) {
+      if (current !== "") {
         tokens.push(current);
         current = "";
       }
-    } else {
-      current += ch;
+      continue;
     }
-    i++;
+
+    current += char;
   }
 
-  if (current.length > 0) tokens.push(current);
-  return tokens;
+  if (current !== "") tokens.push(current);
+
+  const parsed = tokens
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0);
+
+  let command = parsed[0];
+  let args = parsed.slice(1);
+
+  const outputOperatorIndex = args.findIndex(
+    (arg) => arg === ">" || arg === "1>",
+  );
+
+  outputFile = null;
+  if (outputOperatorIndex !== -1) {
+    outputFile = args[outputOperatorIndex + 1];
+    args = args.slice(0, outputOperatorIndex);
+  }
+
+  return { command, args };
 }
 
-async function check_valid_type(args) {
-  const path_directories = process_path.split(path.delimiter);
-  let exists = false;
-  for (const path_directory of path_directories) {
-    const err = await check_file_executable(path.join(path_directory, args));
-    if (!err) {
-      console.log(`${args} is ${path.join(path_directory, args)}`);
-      exists = true;
-      break;
+/** BUILTIN COMMANDS */
+function handleChangeDirectory({ args }) {
+  const path = replaceTilda(args[0]);
+
+  try {
+    fs.accessSync(path, fs.constants.R_OK);
+    process.chdir(path);
+  } catch (e) {
+    print(`cd: no such file or directory: ${path}`);
+    prompt();
+    return;
+  }
+
+  prompt();
+}
+
+function handlePrintWorkingDirectory({ args }) {
+  print(process.cwd());
+  prompt();
+}
+
+function handleExit() {
+  rl.close();
+}
+
+function handleEcho({ args }) {
+  print(args.join(" "));
+  prompt();
+}
+
+function handleExternalCommand({ command, args }) {
+  const spawnOptions = { stdio: "inherit" };
+
+  if (outputFile) {
+    const fd = fs.openSync(outputFile, "w");
+    spawnOptions.stdio = ["inherit", fd, "inherit"];
+  }
+
+  const childProcess = spawnSync(command, args, spawnOptions);
+
+  if (outputFile) {
+    fs.closeSync(spawnOptions.stdio[1]);
+  }
+  prompt();
+}
+
+function handleUnknownCommand({ command }) {
+  print(`${command}: command not found`);
+  prompt();
+}
+
+function handleType({ args }) {
+  const command = args[0];
+
+  if (!command) {
+    prompt();
+    return;
+  }
+
+  if (Object.values(COMMANDS).includes(command)) {
+    print(`${command} is a shell builtin`);
+    prompt();
+    return;
+  }
+
+  const commandPath = findCommand(command);
+  if (commandPath) {
+    print(`${command} is ${commandPath}`);
+    prompt();
+    return;
+  }
+
+  print(`${command}: not found`);
+  prompt();
+}
+
+/** MAIN FUNCTION */
+function main() {
+  prompt();
+
+  rl.on("line", (line) => {
+    const input = parseArguments(line);
+    const command = input.command;
+
+    if (!command) {
+      prompt();
+      return;
     }
-  }
-  if (!exists) {
-    console.log(`${args}: not found`);
-  }
-}
 
-function check_file_executable(filePath) {
-  return new Promise((resolve) => {
-    fs.access(filePath, fs.constants.X_OK, resolve);
-  });
-}
-
-function handle_external_function(command, args) {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, { stdio: "inherit" });
-    if (
-      child.on("error", (err) => {
-        console.log(`${command}: command not found`);
-      })
-    )
-      child.on("close", resolve);
+    switch (command) {
+      case COMMANDS.CD:
+        handleChangeDirectory(input);
+        return;
+      case COMMANDS.PWD:
+        handlePrintWorkingDirectory(input);
+        return;
+      case COMMANDS.EXIT:
+        handleExit();
+        return;
+      case COMMANDS.TYPE:
+        handleType(input);
+        return;
+      case COMMANDS.ECHO:
+        handleEcho(input);
+        return;
+      default:
+        if (findCommand(command)) {
+          handleExternalCommand(input);
+          return;
+        }
+        handleUnknownCommand(input);
+        return;
+    }
   });
 }
 
