@@ -8,7 +8,7 @@ const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
   completer: (line) => {
-    const path = process.env.PATH.split(":");
+    const path = (process.env.PATH || "").split(require("node:path").delimiter);
     const completions = ["echo", "exit", "pwd", "cd", "type"];
     path.forEach((dir) => {
       try {
@@ -106,18 +106,19 @@ function parseString(inputArray) {
 }
 
 function findExecutable(cmd) {
-  const pathDirs = process.env.PATH.split(":");
+  const pathDirs = (process.env.PATH || "").split(path.delimiter);
 
   for (const dir of pathDirs) {
+    const fullPath = path.join(dir, cmd);
     try {
-      const files = fs.readdirSync(dir);
-      if (files.includes(cmd)) {
-        return {
-          present: true,
-          fullPath: path.join(dir, cmd),
-        };
-      }
-    } catch (error) {}
+      fs.accessSync(fullPath, fs.constants.X_OK);
+      return {
+        present: true,
+        fullPath,
+      };
+    } catch (error) {
+      // Not executable or missing, continue searching PATH.
+    }
   }
 
   return {
