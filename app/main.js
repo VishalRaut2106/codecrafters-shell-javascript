@@ -3,12 +3,63 @@ const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
 
+const builtins = ["echo", "type", "exit", "pwd", "cd"];
+
+function getLongestCommonPrefix(items) {
+  if (items.length === 0) return "";
+  let prefix = items[0];
+  for (let i = 1; i < items.length; i++) {
+    let j = 0;
+    while (j < prefix.length && j < items[i].length && prefix[j] === items[i][j]) {
+      j++;
+    }
+    prefix = prefix.slice(0, j);
+    if (prefix.length === 0) break;
+  }
+  return prefix;
+}
+
+function getCommandCompletions(prefix) {
+  const candidates = new Set(builtins);
+  const pathDirs = (process.env.PATH || "").split(path.delimiter);
+
+  for (const dir of pathDirs) {
+    try {
+      for (const file of fs.readdirSync(dir)) {
+        const fullPath = path.join(dir, file);
+        try {
+          fs.accessSync(fullPath, fs.constants.X_OK);
+          candidates.add(file);
+        } catch {
+          // Ignore non-executable files.
+        }
+      }
+    } catch {
+      // Ignore unreadable PATH entries.
+    }
+  }
+
+  return [...candidates].filter((name) => name.startsWith(prefix));
+}
+
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
+  completer: (line) => {
+    const matches = getCommandCompletions(line);
+    if (matches.length === 0) {
+      return [[], line];
+    }
+    if (matches.length === 1) {
+      return [[matches[0] + " "], line];
+    }
+    const commonPrefix = getLongestCommonPrefix(matches);
+    if (commonPrefix.length > line.length) {
+      return [[commonPrefix], line];
+    }
+    return [matches, line];
+  },
 });
-
-const builtins = ["echo", "type", "exit"];
 
 function findExecutable(cmd) {
   const pathDirs = process.env.PATH.split(path.delimiter);
@@ -33,7 +84,7 @@ function prompt() {
     command = command.trim();
     const [cmd, ...args] = command.split(/\s+/);
 
-    if (cmd == "exit" && args[0] === "0") {
+    if (cmd === "exit" && (args.length === 0 || args[0] === "0")) {
       rl.close();
     } else if (cmd === "echo") {
       console.log(args.join(" "));
