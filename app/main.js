@@ -48,6 +48,7 @@ const rl = readline.createInterface({
   completer: (line) => {
     const matches = getCommandCompletions(line);
     if (matches.length === 0) {
+      process.stdout.write("\x07");
       return [[], line];
     }
     if (matches.length === 1) {
@@ -57,6 +58,7 @@ const rl = readline.createInterface({
     if (commonPrefix.length > line.length) {
       return [[commonPrefix], line];
     }
+    process.stdout.write("\x07");
     return [matches, line];
   },
 });
