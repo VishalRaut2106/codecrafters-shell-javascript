@@ -1,8 +1,8 @@
-const readline = require("readline");
-const fs = require("fs");
-const pathModule = require("path");
-const { spawnSync } = require("child_process");
-const os = require("os");
+import readline from "readline";
+import fs from "fs";
+import pathModule from "path";
+import { spawnSync } from "child_process";
+import os from "os";
 
 const rl = readline.createInterface({
   input: process.stdin,
