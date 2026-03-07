@@ -8,9 +8,9 @@ const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
   completer: (line) => {
-    const path = (process.env.PATH || "").split(require("node:path").delimiter);
+    const pathDirs = (process.env.PATH || "").split(path.delimiter);
     const completions = ["echo", "exit", "pwd", "cd", "type"];
-    path.forEach((dir) => {
+    pathDirs.forEach((dir) => {
       try {
         const files = fs.readdirSync(dir);
         completions.push(...files);
@@ -128,6 +128,9 @@ function findExecutable(cmd) {
 }
 
 function handleExitCommand(tokens) {
+  if (tokens.length === 1) {
+    return false;
+  }
   return tokens[1] === "0" ? false : true;
 }
 
