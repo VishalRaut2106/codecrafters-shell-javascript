@@ -115,7 +115,7 @@ function completer(line) {
 
   if (hits.length === 0) {
     process.stdout.write("\x07");
-    return [completions, line];
+    return [[], line];
   }
 
   if (hits.length > 1) {
