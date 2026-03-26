@@ -111,7 +111,7 @@ function completer(line) {
   const hits = [...new Set(completions)]
     .filter((completion) => completion.startsWith(line))
     .sort()
-    .map((hit) => hit + " ");
+    .map((hit) => hit );
 
   if (hits.length === 0) {
     process.stdout.write("\x07");
