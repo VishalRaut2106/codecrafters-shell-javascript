@@ -111,7 +111,25 @@ function completer(line) {
   const hits = completions
     .filter((completion) => completion.startsWith(line))
     .map((hit) => hit + " ");
-  return [hits.length ? hits : completions, line];
+
+  if (hits.length === 0) {
+    process.stdout.write("\x07");
+    return [completions, line];
+  }
+
+  if (hits.length > 1) {
+    let commonPrefix = hits[0];
+    for (let i = 1; i < hits.length; i++) {
+      while (hits[i].indexOf(commonPrefix) !== 0) {
+        commonPrefix = commonPrefix.slice(0, -1);
+      }
+    }
+    if (commonPrefix.trim() === line) {
+      process.stdout.write("\x07");
+    }
+  }
+
+  return [hits, line];
 }
 
 const commandHistory = [];
