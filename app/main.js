@@ -5,10 +5,10 @@ const {
   computeAbsolutePath,
   tokenizeCommand,
   groupTokens,
-} = require("./utility");
-const { completer } = require("./autocomplete");
-const { BUILTIN_COMMANDS, EXTERNAL_COMMANDS } = require("./constants");
-const logger = require("./logger");
+} = require("./functions/utility");
+const { completer } = require("./readline/completer");
+const { BUILTIN_COMMANDS, EXTERNAL_COMMANDS } = require("./functions/constants");
+const logger = require("./functions/logger");
 const { PassThrough } = require("stream");
 
 const commandHistory = [];
