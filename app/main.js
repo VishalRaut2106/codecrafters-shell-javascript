@@ -110,6 +110,7 @@ function completer(line) {
   const completions = [...BUILTIN_COMMANDS, ...Object.keys(externalCommands)];
   const hits = completions
     .filter((completion) => completion.startsWith(line))
+    .sort()
     .map((hit) => hit + " ");
 
   if (hits.length === 0) {
@@ -144,7 +145,7 @@ const rl = readline.createInterface({
 rl.prompt();
 
 rl.on("line", async (command) => {
-  commandHistory.push(`\t${commandHistory.length + 1} ${command}`);
+  commandHistory.push(command);
   const tokens = tokenizeCommand(command);
   const groupedTokens = groupTokens(tokens);
 
@@ -235,7 +236,19 @@ async function mainFn(words, stdin, isFinalCommand = false) {
       }
       break;
     case "history":
-      logger.log(commandHistory.slice(-words[1]).join("\n"), out);
+      const count = words[1] ? parseInt(words[1], 10) : commandHistory.length;
+      const sliceStart = Math.max(0, commandHistory.length - count);
+      const historyToShow = commandHistory.slice(sliceStart);
+      const formattedHistory = historyToShow
+        .map((cmd, index) => {
+          const actualIndex = sliceStart + index + 1;
+          return `${actualIndex.toString().padStart(5, " ")}  ${cmd}`;
+        })
+        .join("\n");
+
+      if (formattedHistory) {
+        logger.log(formattedHistory, out);
+      }
       break;
     default:
       try {
