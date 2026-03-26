@@ -1,196 +1,168 @@
 const readline = require("readline");
 const fs = require("fs");
-const path = require("path");
 const { spawn } = require("child_process");
+const {
+  computeAbsolutePath,
+  tokenizeCommand,
+  groupTokens,
+} = require("./utility");
+const { completer } = require("./autocomplete");
+const { BUILTIN_COMMANDS, EXTERNAL_COMMANDS } = require("./constants");
+const logger = require("./logger");
+const { PassThrough } = require("stream");
 
-const BUILTIN = ["exit", "echo", "type", "pwd", "cd", "history"];
+const commandHistory = [];
 
-const history = [];
-let tabCount = 0;
-
-// ---------- COMPLETER ----------
-function getCommands() {
-  const paths = (process.env.PATH || "").split(path.delimiter);
-  const cmds = {};
-
-  for (const p of paths) {
-    try {
-      if (!fs.existsSync(p)) continue;
-      for (const f of fs.readdirSync(p)) {
-        cmds[f] = true;
-      }
-    } catch {}
-  }
-  return cmds;
-}
-
-function completer(line) {
-  const cmds = [...BUILTIN, ...Object.keys(getCommands())];
-  const hits = cmds.filter(c => c.startsWith(line)).sort();
-
-  if (hits.length === 0) {
-    process.stdout.write("\x07");
-    tabCount = 0;
-    return [[], line];
-  }
-
-  if (hits.length === 1) {
-    tabCount = 0;
-    return [[hits[0] + " "], line];
-  }
-
-  if (tabCount === 0) {
-    process.stdout.write("\x07");
-    tabCount++;
-    return [[], line];
-  }
-
-  console.log("\n" + hits.join("  "));
-  rl.prompt();
-
-  tabCount = 0;
-  return [[], line];
-}
-
-// ---------- READLINE ----------
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
   prompt: "$ ",
-  completer,
+  completer: completer,
 });
 
 rl.prompt();
 
-rl.on("line", async (input) => {
-  tabCount = 0;
+rl.on("line", async (command) => {
+  commandHistory.push(`\t${commandHistory.length + 1} ${command}`);
+  const tokens = tokenizeCommand(command);
+  const groupedTokens = groupTokens(tokens);
 
-  const line = input.trim();
-  history.push(line);
+  let stdin = null;
+  let childStdout = null;
 
-  if (!line) {
-    rl.prompt();
-    return;
-  }
-
-  let tokens = line.split(" ");
-
-  // ---------- REDIRECTION PARSE ----------
-  let stdoutFile = null;
-  let stderrFile = null;
-  let appendOut = false;
-  let appendErr = false;
-
-  const cleaned = [];
-
-  for (let i = 0; i < tokens.length; i++) {
-    const t = tokens[i];
-
-    if (t === ">" || t === "1>") {
-      stdoutFile = tokens[i + 1];
-      appendOut = false;
-      i++;
-    } else if (t === ">>" || t === "1>>") {
-      stdoutFile = tokens[i + 1];
-      appendOut = true;
-      i++;
-    } else if (t === "2>") {
-      stderrFile = tokens[i + 1];
-      appendErr = false;
-      i++;
-    } else if (t === "2>>") {
-      stderrFile = tokens[i + 1];
-      appendErr = true;
-      i++;
-    } else {
-      cleaned.push(t);
-    }
-  }
-
-  const cmd = cleaned[0];
-
-  // ---------- BUILTINS ----------
-  if (cmd === "exit") process.exit();
-
-  if (cmd === "pwd") {
-    console.log(process.cwd());
-  }
-
-  else if (cmd === "cd") {
-    try {
-      process.chdir(cleaned[1] || process.env.HOME);
-    } catch {
-      console.error(`cd: ${cleaned[1]}: No such file or directory`);
-    }
-  }
-
-  else if (cmd === "echo") {
-    console.log(cleaned.slice(1).join(" "));
-  }
-
-  else if (cmd === "type") {
-    if (BUILTIN.includes(cleaned[1])) {
-      console.log(`${cleaned[1]} is a shell builtin`);
-    } else {
-      const cmds = getCommands();
-      if (cmds[cleaned[1]]) {
-        console.log(cleaned[1]);
-      } else {
-        console.error(`${cleaned[1]}: not found`);
-      }
-    }
-  }
-
-  else if (cmd === "history") {
-    let n = history.length;
-
-    if (cleaned[1]) {
-      const val = parseInt(cleaned[1], 10);
-      if (!isNaN(val)) n = val;
+  for (let i = 0; i < groupedTokens.length; i++) {
+    if (i === groupedTokens.length - 1) {
+      childStdout = await mainFn(groupedTokens[i], stdin, true);
+      break;
     }
 
-    const start = Math.max(0, history.length - n);
-
-    for (let i = start; i < history.length; i++) {
-      console.log(`${(i + 1).toString().padStart(5)}  ${history[i]}`);
-    }
-  }
-
-  // ---------- EXTERNAL ----------
-  else {
-    try {
-      const child = spawn(cmd, cleaned.slice(1), {
-        stdio: ["inherit", "pipe", "pipe"]
-      });
-
-      // stdout handling
-      if (stdoutFile) {
-        const fd = fs.openSync(
-          path.resolve(stdoutFile),
-          appendOut ? "a" : "w"
-        );
-        child.stdout.on("data", d => fs.writeSync(fd, d));
-      } else {
-        child.stdout.pipe(process.stdout);
-      }
-
-      // stderr handling (THIS FIXES YOUR BUG)
-      if (stderrFile) {
-        const fd = fs.openSync(
-          path.resolve(stderrFile),
-          appendErr ? "a" : "w"
-        );
-        child.stderr.on("data", d => fs.writeSync(fd, d));
-      } else {
-        child.stderr.pipe(process.stderr);
-      }
-
-      await new Promise(res => child.on("close", res));
-
-    } catch {
-      console.error(`${cmd}: command not found`);
-    }
+    childStdout = await mainFn(groupedTokens[i], stdin);
+    stdin = childStdout;
   }
 
   rl.prompt();
 });
+
+async function mainFn(words, stdin, isFinalCommand = false) {
+  const outStream = new PassThrough();
+  if (isFinalCommand) {
+    outStream.pipe(process.stdout);
+  }
+
+  let outputFd = 0;
+  const outputIdx = words.findIndex(
+    (word) => word === ">" || word === "1>" || word === ">>" || word === "1>>",
+  );
+  if (outputIdx > -1) {
+    const outputFile = computeAbsolutePath(words[outputIdx + 1]);
+
+    if (words[outputIdx] === ">" || words[outputIdx] === "1>") {
+      outputFd = fs.openSync(outputFile, "w");
+    } else {
+      outputFd = fs.openSync(outputFile, "a");
+    }
+
+    words = words.slice(0, outputIdx);
+  }
+
+  const out = outputFd ? outputFd : outStream;
+
+  let errorFd = 0;
+  const errorIdx = words.findIndex((word) => word === "2>" || word === "2>>");
+  if (errorIdx > -1) {
+    const errorFile = computeAbsolutePath(words[errorIdx + 1]);
+
+    if (words[errorIdx] === "2>") {
+      errorFd = fs.openSync(errorFile, "w");
+    } else {
+      errorFd = fs.openSync(errorFile, "a");
+    }
+
+    words = words.slice(0, errorIdx);
+  }
+
+  switch (words[0]) {
+    case "exit":
+      process.exit();
+    case "pwd":
+      logger.log(process.cwd(), out);
+      break;
+    case "cd":
+      const absolutePath = computeAbsolutePath(words[1]);
+
+      if (fs.existsSync(absolutePath)) {
+        process.chdir(absolutePath);
+      } else {
+        logger.error(`cd: ${words[1]}: No such file or directory`, errorFd);
+      }
+
+      break;
+    case "echo":
+      logger.log(words.slice(1).join(" "), out);
+      break;
+    case "type":
+      if (BUILTIN_COMMANDS.includes(words[1])) {
+        logger.log(`${words[1]} is a shell builtin`, out);
+      } else {
+        const result = words[1] in EXTERNAL_COMMANDS;
+
+        if (result) {
+          logger.log(`${words[1]} is ${EXTERNAL_COMMANDS[words[1]]}`, out);
+        } else {
+          logger.error(`${words[1]}: not found`, errorFd);
+        }
+      }
+      break;
+    case "history":
+      logger.log(commandHistory.slice(-words[1]).join("\n"), out);
+      break;
+    default:
+      const result = words[0] in EXTERNAL_COMMANDS;
+      if (result) {
+        try {
+          const spawnOptions = {
+            stdio: ["pipe", isFinalCommand ? "inherit" : "pipe", "inherit"],
+            cwd: process.cwd(),
+          };
+
+          if (outputFd) {
+            spawnOptions.stdio[1] = outputFd;
+          }
+          if (errorFd) {
+            spawnOptions.stdio[2] = errorFd;
+          }
+
+          const childProcess = spawn(words[0], words.slice(1), spawnOptions);
+          // preventing pipeing during first iteration since it causes all sorts of edge cases
+          if (stdin) {
+            stdin.pipe(childProcess.stdin);
+          }
+
+          if (outputFd) {
+            fs.closeSync(spawnOptions.stdio[1]);
+          }
+          if (errorFd) {
+            fs.closeSync(spawnOptions.stdio[2]);
+          }
+
+          if (isFinalCommand) {
+            await new Promise((resolve, reject) => {
+              childProcess.once("close", () => {
+                resolve();
+              });
+            });
+          }
+
+          return childProcess.stdout;
+        } catch (error) {
+          console.log(error);
+        }
+      } else {
+        logger.error(`${words.join(" ")}: command not found`, errorFd);
+      }
+      break;
+  }
+
+  outStream.end();
+  return outStream;
+}
