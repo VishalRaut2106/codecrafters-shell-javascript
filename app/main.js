@@ -135,4 +135,3 @@ async function mainFn(words, stdin, isFinalCommand = false){
 
   outStream.end()
   return outStream
-}
