@@ -1,145 +1,17 @@
 const readline = require("readline");
 const fs = require("fs");
-const path = require("path");
+const { spawn } = require("child_process");
+const {
+  computeAbsolutePath,
+  tokenizeCommand,
+  groupTokens,
+} = require("./utility");
+const { completer } = require("./autocomplete");
+const { BUILTIN_COMMANDS, EXTERNAL_COMMANDS } = require("./constants");
+const logger = require("./logger");
+const { PassThrough } = require("stream");
 
-const builtins = ["echo", "exit", "type", "pwd", "cd", "history"];
-const historyList = [];
-
-let lastTabLine = "";
-
-function getCommonPrefix(strings) {
-  if (strings.length === 0) return "";
-  let prefix = strings[0];
-  for (let i = 1; i < strings.length; i++) {
-    while (strings[i].indexOf(prefix) !== 0) {
-      prefix = prefix.substring(0, prefix.length - 1);
-      if (!prefix) return "";
-    }
-  }
-  return prefix;
-}
-
-function completer(line) {
-  const parts = line.split(" ");
-  if (parts.length > 1) {
-    // Filename completion
-    const lastPart = parts[parts.length - 1];
-    let searchDir = ".";
-    let prefix = lastPart;
-    let pathPrefix = "";
-    const lastSlashIndex = lastPart.lastIndexOf("/");
-
-    if (lastSlashIndex !== -1) {
-      pathPrefix = lastPart.substring(0, lastSlashIndex + 1);
-      searchDir = pathPrefix;
-      prefix = lastPart.substring(lastSlashIndex + 1);
-    }
-
-    try {
-      if (fs.existsSync(searchDir) && fs.statSync(searchDir).isDirectory()) {
-        let hits = fs
-          .readdirSync(searchDir)
-          .filter((f) => f.startsWith(prefix));
-        hits = Array.from(new Set(hits)).sort();
-
-        if (hits.length === 1) {
-          lastTabLine = "";
-          const fullMatchPath = path.join(searchDir, hits[0]);
-          const isDir = fs.statSync(fullMatchPath).isDirectory();
-          if (isDir) {
-            return [[pathPrefix + hits[0] + "/"], lastPart];
-          } else {
-            return [[pathPrefix + hits[0] + " "], lastPart];
-          }
-        }
-        if (hits.length > 1) {
-          const commonPrefix = getCommonPrefix(hits);
-          if (commonPrefix.length > prefix.length) {
-            lastTabLine = "";
-            return [[pathPrefix + commonPrefix], lastPart];
-          }
-          if (line === lastTabLine) {
-            const displayHits = hits.map((h) => {
-              try {
-                if (fs.statSync(path.join(searchDir, h)).isDirectory())
-                  return h + "/";
-              } catch (e) {}
-              return h;
-            });
-            process.stdout.write("\r\n" + displayHits.join("  ") + "\r\n");
-            rl.line = "";
-            rl.cursor = 0;
-            rl.prompt();
-            rl.write(line);
-            lastTabLine = "";
-          } else {
-            process.stdout.write("\x07");
-            lastTabLine = line;
-          }
-          return [[], lastPart];
-        }
-      }
-    } catch (e) {}
-    process.stdout.write("\x07");
-    lastTabLine = "";
-    return [[], lastPart];
-  }
-
-  let completions = [...builtins];
-
-  const paths = (process.env.PATH || "").split(path.delimiter);
-  for (const p of paths) {
-    try {
-      if (!fs.existsSync(p)) continue;
-      const files = fs.readdirSync(p);
-      for (const file of files) {
-        const fullPath = path.join(p, file);
-        try {
-          fs.accessSync(fullPath, fs.constants.X_OK);
-          if (!completions.includes(file)) {
-            completions.push(file);
-          }
-        } catch (e) {}
-      }
-    } catch (e) {}
-  }
-
-  completions = Array.from(new Set(completions)).sort();
-  const hits = completions.filter((c) => c.startsWith(line));
-
-  if (hits.length === 0) {
-    process.stdout.write("\x07");
-    lastTabLine = "";
-    return [[], line];
-  }
-
-  if (hits.length === 1) {
-    lastTabLine = "";
-    return [[hits[0] + " "], line];
-  }
-
-  const commonPrefix = getCommonPrefix(hits);
-  if (commonPrefix.length > line.length) {
-    lastTabLine = "";
-    return [[commonPrefix], line];
-  }
-
-  if (line === lastTabLine) {
-    // Second tab
-    process.stdout.write("\r\n" + hits.join("  ") + "\r\n");
-    rl.line = "";
-    rl.cursor = 0;
-    rl.prompt();
-    rl.write(line);
-    lastTabLine = "";
-  } else {
-    // First tab
-    process.stdout.write("\x07");
-    lastTabLine = line;
-  }
-
-  return [[], line];
-}
+const commandHistory = [];
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -150,297 +22,147 @@ const rl = readline.createInterface({
 
 rl.prompt();
 
-function findInPath(command) {
-  if (command.includes("/") || command.includes(path.sep)) {
-    try {
-      fs.accessSync(command, fs.constants.X_OK);
-      return command;
-    } catch (e) {
-      return null;
+rl.on("line", async (command) => {
+  commandHistory.push(`\t${commandHistory.length + 1} ${command}`);
+  const tokens = tokenizeCommand(command);
+  const groupedTokens = groupTokens(tokens);
+
+  let stdin = null;
+  let childStdout = null;
+
+  for (let i = 0; i < groupedTokens.length; i++) {
+    if (i === groupedTokens.length - 1) {
+      childStdout = await mainFn(groupedTokens[i], stdin, true);
+      break;
     }
-  }
-  const paths = (process.env.PATH || "").split(path.delimiter);
-  for (const p of paths) {
-    const fullPath = path.join(p, command);
-    try {
-      fs.accessSync(fullPath, fs.constants.X_OK);
-      return fullPath;
-    } catch (e) {
-      // Continue searching
-    }
-  }
-  return null;
-}
 
-function parseInput(line) {
-  const args = [];
-  let currentArg = "";
-  let inSingleQuote = false;
-  let inDoubleQuote = false;
-  let hasChars = false;
-
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i];
-
-    if (char === "\\" && !inSingleQuote) {
-      if (inDoubleQuote) {
-        const nextChar = line[i + 1];
-        if (nextChar === '"' || nextChar === "\\" || nextChar === "$") {
-          currentArg += nextChar;
-          i++;
-        } else {
-          currentArg += char;
-        }
-        hasChars = true;
-      } else {
-        // Backslash outside quotes: escape next char
-        i++;
-        if (i < line.length) {
-          currentArg += line[i];
-          hasChars = true;
-        }
-      }
-    } else if (char === "'" && !inDoubleQuote) {
-      inSingleQuote = !inSingleQuote;
-      hasChars = true;
-    } else if (char === '"' && !inSingleQuote) {
-      inDoubleQuote = !inDoubleQuote;
-      hasChars = true;
-    } else if (char === ">" && !inSingleQuote && !inDoubleQuote) {
-      if (hasChars) {
-        args.push(currentArg);
-        currentArg = "";
-        hasChars = false;
-      }
-      if (line[i + 1] === ">") {
-        args.push(">>");
-        i++;
-      } else {
-        args.push(">");
-      }
-    } else if (
-      char === "1" &&
-      line[i + 1] === ">" &&
-      !inSingleQuote &&
-      !inDoubleQuote
-    ) {
-      if (hasChars) {
-        args.push(currentArg);
-        currentArg = "";
-        hasChars = false;
-      }
-      if (line[i + 2] === ">") {
-        args.push("1>>");
-        i += 2;
-      } else {
-        args.push("1>");
-        i++;
-      }
-    } else if (
-      char === "2" &&
-      line[i + 1] === ">" &&
-      !inSingleQuote &&
-      !inDoubleQuote
-    ) {
-      if (hasChars) {
-        args.push(currentArg);
-        currentArg = "";
-        hasChars = false;
-      }
-      if (line[i + 2] === ">") {
-        args.push("2>>");
-        i += 2;
-      } else {
-        args.push("2>");
-        i++;
-      }
-    } else if (char === " " && !inSingleQuote && !inDoubleQuote) {
-      if (hasChars) {
-        args.push(currentArg);
-        currentArg = "";
-        hasChars = false;
-      }
-    } else if (char === "|" && !inSingleQuote && !inDoubleQuote) {
-      if (hasChars) {
-        args.push(currentArg);
-        currentArg = "";
-        hasChars = false;
-      }
-      args.push("|");
-    } else {
-      currentArg += char;
-      hasChars = true;
-    }
+    childStdout = await mainFn(groupedTokens[i], stdin);
+    stdin = childStdout;
   }
 
-  if (hasChars) {
-    args.push(currentArg);
-  }
-
-  return args;
-}
-
-rl.on("line", (line) => {
-  historyList.push(line);
-  const parsedArgs = parseInput(line.trim());
-  if (parsedArgs.length === 0) {
-    rl.prompt();
-    return;
-  }
-
-  const stages = [];
-  let currentStage = [];
-  for (const token of parsedArgs) {
-    if (token === "|") {
-      stages.push(currentStage);
-      currentStage = [];
-    } else {
-      currentStage.push(token);
-    }
-  }
-  stages.push(currentStage);
-
-  const { spawn } = require("child_process");
-  const { PassThrough } = require("stream");
-
-  let prevStdout = null;
-
-  async function runStages() {
-    for (let i = 0; i < stages.length; i++) {
-      const tokens = stages[i];
-      let stdoutFile = null;
-      let stdoutAppend = false;
-      let stderrFile = null;
-      let stderrAppend = false;
-      const filtered = [];
-      for (let j = 0; j < tokens.length; j++) {
-        const t = tokens[j];
-        if (t === ">" || t === "1>") {
-          stdoutFile = tokens[++j];
-          stdoutAppend = false;
-        } else if (t === ">>" || t === "1>>") {
-          stdoutFile = tokens[++j];
-          stdoutAppend = true;
-        } else if (t === "2>") {
-          stderrFile = tokens[++j];
-          stderrAppend = false;
-        } else if (t === "2>>") {
-          stderrFile = tokens[++j];
-          stderrAppend = true;
-        } else filtered.push(t);
-      }
-
-      const [cmd, ...cargs] = filtered;
-      let stdout = i === stages.length - 1 ? process.stdout : "pipe";
-      let stderr = process.stderr;
-
-      let outFd = null;
-      if (stdoutFile) {
-        const dir = path.dirname(stdoutFile);
-        if (dir !== ".") fs.mkdirSync(dir, { recursive: true });
-        outFd = fs.openSync(stdoutFile, stdoutAppend ? "a" : "w");
-        stdout = outFd;
-      }
-      let errFd = null;
-      if (stderrFile) {
-        const dir = path.dirname(stderrFile);
-        if (dir !== ".") fs.mkdirSync(dir, { recursive: true });
-        errFd = fs.openSync(stderrFile, stderrAppend ? "a" : "w");
-        stderr = errFd;
-      }
-
-      if (builtins.includes(cmd)) {
-        if (cmd === "exit") process.exit(0);
-
-        const out = new PassThrough();
-        const write = (msg) => {
-          if (
-            stdout instanceof fs.WriteStream ||
-            typeof stdout === "number" ||
-            stdout === process.stdout
-          ) {
-            if (typeof stdout === "number") fs.writeSync(stdout, msg + "\n");
-            else if (stdout === process.stdout)
-              process.stdout.write(msg + "\n");
-            else stdout.write(msg + "\n");
-          } else {
-            out.write(msg + "\n");
-          }
-        };
-
-        if (cmd === "echo") write(cargs.join(" "));
-        else if (cmd === "pwd") write(process.cwd());
-        else if (cmd === "history") {
-          historyList.forEach((h, i) => {
-            write(`${(i + 1).toString().padStart(5, " ")}  ${h}`);
-          });
-        } else if (cmd === "type") {
-          const target = cargs[0];
-          if (builtins.includes(target)) write(`${target} is a shell builtin`);
-          else {
-            const fPath = findInPath(target);
-            if (fPath) write(`${target} is ${fPath}`);
-            else write(`${target}: not found`);
-          }
-        } else if (cmd === "cd") {
-          let dir = cargs[0];
-          if (dir === "~") dir = process.env.HOME;
-          try {
-            process.chdir(dir);
-          } catch (e) {
-            const msg = `cd: ${cargs[0]}: No such file or directory`;
-            if (typeof stderr === "number") fs.writeSync(stderr, msg + "\n");
-            else stderr.write(msg + "\n");
-          }
-        }
-
-        out.end();
-        prevStdout = out;
-        if (outFd) fs.closeSync(outFd);
-        if (errFd) fs.closeSync(errFd);
-
-        if (i === stages.length - 1) rl.prompt();
-      } else {
-        const fullPath = findInPath(cmd);
-        if (!fullPath) {
-          const msg = `${cmd}: command not found\n`;
-          process.stderr.write(msg);
-          prevStdout = new PassThrough();
-          prevStdout.end();
-          if (i === stages.length - 1) rl.prompt();
-          continue;
-        }
-
-        const stdio = [
-          prevStdout ? "pipe" : "inherit",
-          stdout === process.stdout
-            ? "inherit"
-            : typeof stdout === "number"
-              ? stdout
-              : "pipe",
-          stderr === process.stderr
-            ? "inherit"
-            : typeof stderr === "number"
-              ? stderr
-              : "pipe",
-        ];
-        const child = spawn(fullPath, cargs, { stdio, argv0: cmd });
-
-        if (prevStdout) prevStdout.pipe(child.stdin);
-
-        if (stdio[1] === "pipe") prevStdout = child.stdout;
-        else prevStdout = null;
-
-        if (i === stages.length - 1) {
-          child.on("exit", () => {
-            if (outFd) fs.closeSync(outFd);
-            if (errFd) fs.closeSync(errFd);
-            rl.prompt();
-          });
-        }
-      }
-    }
-  }
-
-  runStages();
+  rl.prompt();
 });
+
+async function mainFn(words, stdin, isFinalCommand = false) {
+  const outStream = new PassThrough();
+  if (isFinalCommand) {
+    outStream.pipe(process.stdout);
+  }
+
+  let outputFd = 0;
+  const outputIdx = words.findIndex(
+    (word) => word === ">" || word === "1>" || word === ">>" || word === "1>>",
+  );
+  if (outputIdx > -1) {
+    const outputFile = computeAbsolutePath(words[outputIdx + 1]);
+
+    if (words[outputIdx] === ">" || words[outputIdx] === "1>") {
+      outputFd = fs.openSync(outputFile, "w");
+    } else {
+      outputFd = fs.openSync(outputFile, "a");
+    }
+
+    words = words.slice(0, outputIdx);
+  }
+
+  const out = outputFd ? outputFd : outStream;
+
+  let errorFd = 0;
+  const errorIdx = words.findIndex((word) => word === "2>" || word === "2>>");
+  if (errorIdx > -1) {
+    const errorFile = computeAbsolutePath(words[errorIdx + 1]);
+
+    if (words[errorIdx] === "2>") {
+      errorFd = fs.openSync(errorFile, "w");
+    } else {
+      errorFd = fs.openSync(errorFile, "a");
+    }
+
+    words = words.slice(0, errorIdx);
+  }
+
+  switch (words[0]) {
+    case "exit":
+      process.exit();
+    case "pwd":
+      logger.log(process.cwd(), out);
+      break;
+    case "cd":
+      const absolutePath = computeAbsolutePath(words[1]);
+
+      if (fs.existsSync(absolutePath)) {
+        process.chdir(absolutePath);
+      } else {
+        logger.error(`cd: ${words[1]}: No such file or directory`, errorFd);
+      }
+
+      break;
+    case "echo":
+      logger.log(words.slice(1).join(" "), out);
+      break;
+    case "type":
+      if (BUILTIN_COMMANDS.includes(words[1])) {
+        logger.log(`${words[1]} is a shell builtin`, out);
+      } else {
+        const result = words[1] in EXTERNAL_COMMANDS;
+
+        if (result) {
+          logger.log(`${words[1]} is ${EXTERNAL_COMMANDS[words[1]]}`, out);
+        } else {
+          logger.error(`${words[1]}: not found`, errorFd);
+        }
+      }
+      break;
+    case "history":
+      logger.log(commandHistory.slice(-words[1]).join("\n"), out);
+      break;
+    default:
+      const result = words[0] in EXTERNAL_COMMANDS;
+      if (result) {
+        try {
+          const spawnOptions = {
+            stdio: ["pipe", isFinalCommand ? "inherit" : "pipe", "inherit"],
+            cwd: process.cwd(),
+          };
+
+          if (outputFd) {
+            spawnOptions.stdio[1] = outputFd;
+          }
+          if (errorFd) {
+            spawnOptions.stdio[2] = errorFd;
+          }
+
+          const childProcess = spawn(words[0], words.slice(1), spawnOptions);
+          // preventing pipeing during first iteration since it causes all sorts of edge cases
+          if (stdin) {
+            stdin.pipe(childProcess.stdin);
+          }
+
+          if (outputFd) {
+            fs.closeSync(spawnOptions.stdio[1]);
+          }
+          if (errorFd) {
+            fs.closeSync(spawnOptions.stdio[2]);
+          }
+
+          if (isFinalCommand) {
+            await new Promise((resolve, reject) => {
+              childProcess.once("close", () => {
+                resolve();
+              });
+            });
+          }
+
+          return childProcess.stdout;
+        } catch (error) {
+          console.log(error);
+        }
+      } else {
+        logger.error(`${words.join(" ")}: command not found`, errorFd);
+      }
+      break;
+  }
+
+  outStream.end();
+  return outStream;
+}
