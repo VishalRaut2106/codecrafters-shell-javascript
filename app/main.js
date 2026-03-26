@@ -96,10 +96,18 @@ function getExternalCommands() {
   return commandMap;
 }
 
-const EXTERNAL_COMMANDS = getExternalCommands();
+function resolveExternalCommand(command) {
+  const externalCommands = getExternalCommands();
+  if (command in externalCommands) {
+    return externalCommands[command];
+  }
+
+  return null;
+}
 
 function completer(line) {
-  const completions = [...BUILTIN_COMMANDS, ...Object.keys(EXTERNAL_COMMANDS)];
+  const externalCommands = getExternalCommands();
+  const completions = [...BUILTIN_COMMANDS, ...Object.keys(externalCommands)];
   const hits = completions.filter((completion) => completion.startsWith(line));
   return [hits.length ? hits : completions, line];
 }
@@ -197,10 +205,10 @@ async function mainFn(words, stdin, isFinalCommand = false) {
       if (BUILTIN_COMMANDS.includes(words[1])) {
         logger.log(`${words[1]} is a shell builtin`, out);
       } else {
-        const result = words[1] in EXTERNAL_COMMANDS;
+        const resolvedCommand = resolveExternalCommand(words[1]);
 
-        if (result) {
-          logger.log(`${words[1]} is ${EXTERNAL_COMMANDS[words[1]]}`, out);
+        if (resolvedCommand) {
+          logger.log(`${words[1]} is ${resolvedCommand}`, out);
         } else {
           logger.error(`${words[1]}: not found`, errorFd);
         }
@@ -210,8 +218,8 @@ async function mainFn(words, stdin, isFinalCommand = false) {
       logger.log(commandHistory.slice(-words[1]).join("\n"), out);
       break;
     default:
-      const result = words[0] in EXTERNAL_COMMANDS;
-      if (result) {
+      const resolvedCommand = resolveExternalCommand(words[0]);
+      if (resolvedCommand) {
         try {
           const spawnOptions = {
             stdio: ["pipe", isFinalCommand ? "inherit" : "pipe", "inherit"],
@@ -225,7 +233,7 @@ async function mainFn(words, stdin, isFinalCommand = false) {
             spawnOptions.stdio[2] = errorFd;
           }
 
-          const childProcess = spawn(words[0], words.slice(1), spawnOptions);
+          const childProcess = spawn(resolvedCommand, words.slice(1), spawnOptions);
           // preventing pipeing during first iteration since it causes all sorts of edge cases
           if (stdin) {
             stdin.pipe(childProcess.stdin);
