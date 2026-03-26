@@ -218,47 +218,57 @@ async function mainFn(words, stdin, isFinalCommand = false) {
       logger.log(commandHistory.slice(-words[1]).join("\n"), out);
       break;
     default:
-      const resolvedCommand = resolveExternalCommand(words[0]);
-      if (resolvedCommand) {
-        try {
-          const spawnOptions = {
-            stdio: ["pipe", isFinalCommand ? "inherit" : "pipe", "inherit"],
-            cwd: process.cwd(),
-          };
+      try {
+        const spawnOptions = {
+          stdio: ["pipe", isFinalCommand ? "inherit" : "pipe", "inherit"],
+          cwd: process.cwd(),
+          env: process.env,
+        };
 
-          if (outputFd) {
-            spawnOptions.stdio[1] = outputFd;
-          }
-          if (errorFd) {
-            spawnOptions.stdio[2] = errorFd;
-          }
-
-          const childProcess = spawn(resolvedCommand, words.slice(1), spawnOptions);
-          // preventing pipeing during first iteration since it causes all sorts of edge cases
-          if (stdin) {
-            stdin.pipe(childProcess.stdin);
-          }
-
-          if (outputFd) {
-            fs.closeSync(spawnOptions.stdio[1]);
-          }
-          if (errorFd) {
-            fs.closeSync(spawnOptions.stdio[2]);
-          }
-
-          if (isFinalCommand) {
-            await new Promise((resolve, reject) => {
-              childProcess.once("close", () => {
-                resolve();
-              });
-            });
-          }
-
-          return childProcess.stdout;
-        } catch (error) {
-          console.log(error);
+        if (outputFd) {
+          spawnOptions.stdio[1] = outputFd;
         }
-      } else {
+        if (errorFd) {
+          spawnOptions.stdio[2] = errorFd;
+        }
+
+        const childProcess = spawn(words[0], words.slice(1), spawnOptions);
+        let spawnFailed = false;
+
+        childProcess.once("error", (err) => {
+          if (err && err.code === "ENOENT") {
+            logger.error(`${words.join(" ")}: command not found`, errorFd);
+            spawnFailed = true;
+          }
+        });
+
+        // preventing pipeing during first iteration since it causes all sorts of edge cases
+        if (stdin && childProcess.stdin) {
+          stdin.pipe(childProcess.stdin);
+        }
+
+        if (outputFd) {
+          fs.closeSync(spawnOptions.stdio[1]);
+        }
+        if (errorFd) {
+          fs.closeSync(spawnOptions.stdio[2]);
+        }
+
+        if (isFinalCommand) {
+          await new Promise((resolve) => {
+            childProcess.once("close", () => {
+              resolve();
+            });
+          });
+        }
+
+        if (spawnFailed) {
+          outStream.end();
+          return outStream;
+        }
+
+        return childProcess.stdout || outStream;
+      } catch (_error) {
         logger.error(`${words.join(" ")}: command not found`, errorFd);
       }
       break;
