@@ -94,7 +94,19 @@ function resolveExternalCommand(command) {
   return externalCommands[command] || null;
 }
 
-// ✅ FIXED COMPLETER
+const commandHistory = [];
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+  prompt: "$ ",
+  terminal: true,
+  completer: completer,
+});
+
+rl.prompt();
+
+// ✅ FINAL COMPLETER (fixed)
 function completer(line) {
   const externalCommands = getExternalCommands();
   const completions = [...BUILTIN_COMMANDS, ...Object.keys(externalCommands)];
@@ -103,17 +115,18 @@ function completer(line) {
     .filter((c) => c.startsWith(line))
     .sort();
 
+  // ❌ no match
   if (hits.length === 0) {
     process.stdout.write("\x07");
     return [[], line];
   }
 
-  // ✅ single match → add space
+  // ✅ single match
   if (hits.length === 1) {
     return [[hits[0] + " "], line];
   }
 
-  // ✅ multiple → common prefix
+  // ✅ multiple matches
   let commonPrefix = hits[0];
   for (let i = 1; i < hits.length; i++) {
     while (!hits[i].startsWith(commonPrefix)) {
@@ -125,20 +138,14 @@ function completer(line) {
     process.stdout.write("\x07");
   }
 
-  return [hits, line];
+  // 🔥 manual print (prevents blank line bug)
+  process.stdout.write("\n" + hits.join("  ") + "\n");
+
+  // 🔥 restore prompt manually
+  rl.prompt(true);
+
+  return [[], line]; // critical
 }
-
-const commandHistory = [];
-
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-  prompt: "$ ",
-  completer,
-  terminal: true,
-});
-
-rl.prompt();
 
 rl.on("line", async (command) => {
   commandHistory.push(command);
@@ -161,62 +168,32 @@ async function mainFn(words, stdin, isFinalCommand = false) {
   const outStream = new PassThrough();
   if (isFinalCommand) outStream.pipe(process.stdout);
 
-  let outputFd = 0;
-  const outputIdx = words.findIndex((w) =>
-    [">", "1>", ">>", "1>>"].includes(w)
-  );
-
-  if (outputIdx > -1) {
-    const file = computeAbsolutePath(words[outputIdx + 1]);
-    outputFd =
-      words[outputIdx].includes(">>")
-        ? fs.openSync(file, "a")
-        : fs.openSync(file, "w");
-
-    words = words.slice(0, outputIdx);
-  }
-
-  const out = outputFd || outStream;
-
-  let errorFd = 0;
-  const errorIdx = words.findIndex((w) => ["2>", "2>>"].includes(w));
-
-  if (errorIdx > -1) {
-    const file = computeAbsolutePath(words[errorIdx + 1]);
-    errorFd =
-      words[errorIdx] === "2>>"
-        ? fs.openSync(file, "a")
-        : fs.openSync(file, "w");
-
-    words = words.slice(0, errorIdx);
-  }
-
   switch (words[0]) {
     case "exit":
       process.exit();
 
     case "pwd":
-      logger.log(process.cwd(), out);
+      logger.log(process.cwd(), outStream);
       break;
 
     case "cd":
       const p = computeAbsolutePath(words[1]);
       if (fs.existsSync(p)) process.chdir(p);
-      else logger.error(`cd: ${words[1]}: No such file or directory`, errorFd);
+      else logger.error(`cd: ${words[1]}: No such file or directory`);
       break;
 
     case "echo":
-      logger.log(words.slice(1).join(" "), out);
+      logger.log(words.slice(1).join(" "), outStream);
       break;
 
     case "type":
       if (BUILTIN_COMMANDS.includes(words[1])) {
-        logger.log(`${words[1]} is a shell builtin`, out);
+        logger.log(`${words[1]} is a shell builtin`, outStream);
       } else {
         const cmd = resolveExternalCommand(words[1]);
         cmd
-          ? logger.log(`${words[1]} is ${cmd}`, out)
-          : logger.error(`${words[1]}: not found`, errorFd);
+          ? logger.log(`${words[1]} is ${cmd}`, outStream)
+          : logger.error(`${words[1]}: not found`);
       }
       break;
 
@@ -231,19 +208,17 @@ async function mainFn(words, stdin, isFinalCommand = false) {
         .map((cmd, i) => `${(start + i + 1).toString().padStart(5)}  ${cmd}`)
         .join("\n");
 
-      if (history) logger.log(history, out);
+      if (history) logger.log(history, outStream);
       break;
 
     default:
       try {
         const child = spawn(words[0], words.slice(1), {
           stdio: ["pipe", isFinalCommand ? "inherit" : "pipe", "inherit"],
-          cwd: process.cwd(),
-          env: process.env,
         });
 
         child.on("error", () =>
-          logger.error(`${words.join(" ")}: command not found`, errorFd)
+          logger.error(`${words.join(" ")}: command not found`)
         );
 
         if (stdin && child.stdin) stdin.pipe(child.stdin);
@@ -254,7 +229,7 @@ async function mainFn(words, stdin, isFinalCommand = false) {
 
         return child.stdout || outStream;
       } catch {
-        logger.error(`${words.join(" ")}: command not found`, errorFd);
+        logger.error(`${words.join(" ")}: command not found`);
       }
   }
 
