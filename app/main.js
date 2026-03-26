@@ -108,7 +108,9 @@ function resolveExternalCommand(command) {
 function completer(line) {
   const externalCommands = getExternalCommands();
   const completions = [...BUILTIN_COMMANDS, ...Object.keys(externalCommands)];
-  const hits = completions.filter((completion) => completion.startsWith(line));
+  const hits = completions
+    .filter((completion) => completion.startsWith(line))
+    .map((hit) => hit + " ");
   return [hits.length ? hits : completions, line];
 }
 
