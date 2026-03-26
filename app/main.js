@@ -101,12 +101,11 @@ const rl = readline.createInterface({
   output: process.stdout,
   prompt: "$ ",
   terminal: true,
-  completer: completer,
+  completer,
 });
 
 rl.prompt();
 
-// ✅ FINAL COMPLETER (fixed)
 function completer(line) {
   const externalCommands = getExternalCommands();
   const completions = [...BUILTIN_COMMANDS, ...Object.keys(externalCommands)];
@@ -126,7 +125,7 @@ function completer(line) {
     return [[hits[0] + " "], line];
   }
 
-  // ✅ multiple matches
+  // ✅ find common prefix
   let commonPrefix = hits[0];
   for (let i = 1; i < hits.length; i++) {
     while (!hits[i].startsWith(commonPrefix)) {
@@ -134,17 +133,17 @@ function completer(line) {
     }
   }
 
-  if (commonPrefix === line) {
-    process.stdout.write("\x07");
+  // ✅ expand if possible
+  if (commonPrefix.length > line.length) {
+    return [[commonPrefix], line];
   }
 
-  // 🔥 manual print (prevents blank line bug)
+  // ❌ no further expansion → show options
+  process.stdout.write("\x07");
   process.stdout.write("\n" + hits.join("  ") + "\n");
-
-  // 🔥 restore prompt manually
   rl.prompt(true);
 
-  return [[], line]; // critical
+  return [[], line];
 }
 
 rl.on("line", async (command) => {
