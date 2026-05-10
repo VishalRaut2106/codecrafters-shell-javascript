@@ -13,10 +13,10 @@ function tokenizeCommand(command) {
 
     if (char === '"' && !inSingleQuotes) {
       inDoubleQuotes = !inDoubleQuotes;
-      currentToken += char;
+      // Don't add the quote character to the token
     } else if (char === "'" && !inDoubleQuotes) {
       inSingleQuotes = !inSingleQuotes;
-      currentToken += char;
+      // Don't add the quote character to the token
     } else if ((char === " " || char === "\t") && !inDoubleQuotes && !inSingleQuotes) {
       if (currentToken) {
         tokens.push(currentToken);
