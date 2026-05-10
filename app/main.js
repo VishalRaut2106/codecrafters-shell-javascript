@@ -32,10 +32,15 @@ const rl = readline.createInterface({
     }
     
     if (hits.length === 1) {
-      // Single match - return it so readline can complete
+      // Single match - manually apply completion
       tabCount = 0;
       lastTabLine = "";
-      return [[hits[0] + " "], line];
+      // Manually write the completion
+      const completion = hits[0] + " ";
+      // Clear the current line and write the completion
+      rl.write(null, { ctrl: true, name: "u" }); // Clear line
+      rl.write(completion);
+      return [[], line];
     }
     
     // Multiple matches - handle double-tab
