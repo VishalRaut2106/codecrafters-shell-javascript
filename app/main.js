@@ -75,6 +75,7 @@ function getAvailableCommands() {
 }
 
 const commandHistory = [];
+let lastAppendedIndex = 0; // tracks how many entries have been appended to file via history -a
 
 let lastTabLine = "";
 let tabCount = 0;
@@ -278,7 +279,20 @@ async function mainFn(words, stdin, isFinalCommand = false) {
         }
         break;
       }
-      // history [n] - display history, optionally limited to last n entries
+      // history -a <path> - append new commands (since last -a) to file
+      if (words[1] === "-a" && words[2]) {
+        const filePath = computeAbsolutePath(words[2]);
+        try {
+          const newEntries = commandHistory.slice(lastAppendedIndex);
+          if (newEntries.length > 0) {
+            fs.appendFileSync(filePath, newEntries.join("\n") + "\n", "utf8");
+          }
+          lastAppendedIndex = commandHistory.length;
+        } catch (err) {
+          logger.error(`history: ${words[2]}: cannot append to file`, errorFd);
+        }
+        break;
+      }
       const n = words[1] ? parseInt(words[1], 10) : null;
       const entries = n ? commandHistory.slice(-n) : commandHistory;
       const startIndex = commandHistory.length - entries.length;
