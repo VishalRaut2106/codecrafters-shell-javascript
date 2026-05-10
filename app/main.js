@@ -182,7 +182,7 @@ const rl = readline.createInterface({
     }
 
     // Second tab - show completions (display without trailing space, keep / for dirs)
-    const displayHits = hits.map(h => h.replace(/ $/, ""));
+    const displayHits = hits.map(h => h.replace(/ $/, "")).sort();
     const lineToRestore = line;
     process.stdout.write("\n" + displayHits.join("  ") + "\n");
     tabCount = 0;
@@ -190,7 +190,10 @@ const rl = readline.createInterface({
     // Use rl.write to restore the line into readline's internal buffer
     // so subsequent keypresses are inserted at the correct position
     if (lineToRestore) {
-      rl.write(lineToRestore);
+      // Write char by char to avoid triggering the 'line' event on \n
+      for (const ch of lineToRestore) {
+        rl.write(ch);
+      }
     }
 
     return [[], prefixToMatch];
