@@ -153,6 +153,15 @@ rl.prompt();
 
 rl.on("line", async (command) => {
   commandHistory.push(command);
+  // Manually add to readline's internal history for up-arrow recall
+  // (needed when stdin is not a TTY, e.g. in test environments)
+  if (command.trim()) {
+    rl.history = rl.history || [];
+    rl.history.unshift(command);
+    if (rl.history.length > 1000) {
+      rl.history.pop();
+    }
+  }
   const tokens = tokenizeCommand(command);
   const groupedTokens = groupTokens(tokens);
 
