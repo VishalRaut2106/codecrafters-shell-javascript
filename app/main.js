@@ -56,29 +56,38 @@ const commandHistory = [];
 let lastTabLine = "";
 let tabCount = 0;
 
+// Create readline without completer - we'll handle TAB manually
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
   prompt: "$ ",
-  completer: (line, callback) => {
+  terminal: true,
+});
+
+// Handle TAB key manually using _ttyWrite
+const originalTtyWrite = rl._ttyWrite.bind(rl);
+rl._ttyWrite = function(s, key) {
+  if (key && key.name === 'tab') {
+    // Get the current line
+    const line = rl.line;
     const availableCommands = getAvailableCommands();
-    let hits = availableCommands.filter((cmd) => cmd.startsWith(line));
+    const hits = availableCommands.filter((cmd) => cmd.startsWith(line));
     
     if (hits.length === 0) {
-      process.stdout.write("\x07"); // bell
+      // No matches - ring bell
+      process.stdout.write("\x07");
       tabCount = 0;
       lastTabLine = "";
-      callback(null, [[], line]);
       return;
     }
     
     if (hits.length === 1) {
-      // Single match - return the completion WITH space
+      // Single match - complete it
+      const completion = hits[0];
+      const remaining = completion.substring(line.length) + " ";
+      rl.write(remaining);
       tabCount = 0;
       lastTabLine = "";
-      const completion = hits[0] + " ";
-      // Return the completion so readline applies it
-      callback(null, [[completion], line]);
       return;
     }
     
@@ -93,7 +102,6 @@ const rl = readline.createInterface({
     if (tabCount === 1) {
       // First tab - just ring bell
       process.stdout.write("\x07");
-      callback(null, [[], line]);
       return;
     }
     
@@ -102,11 +110,12 @@ const rl = readline.createInterface({
     rl.prompt();
     rl.write(line); // Redraw the current line
     tabCount = 0;
-    
-    callback(null, [[], line]);
-  },
-  terminal: true,
-});
+    return;
+  }
+  
+  // For non-TAB keys, use original behavior
+  return originalTtyWrite(s, key);
+};
 
 rl.prompt();
 
