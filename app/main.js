@@ -13,11 +13,53 @@ const { PassThrough } = require("stream");
 
 const commandHistory = [];
 
+let lastTabLine = "";
+let tabCount = 0;
+
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
   prompt: "$ ",
-  completer: completer,
+  completer: (line) => {
+    const availableCommands = getAvailableCommands();
+    let hits = availableCommands.filter((cmd) => cmd.startsWith(line));
+    
+    if (hits.length === 0) {
+      process.stdout.write("\x07"); // bell
+      tabCount = 0;
+      lastTabLine = "";
+      return [[], line];
+    }
+    
+    if (hits.length === 1) {
+      // Single match - return it so readline can complete
+      tabCount = 0;
+      lastTabLine = "";
+      return [[hits[0] + " "], line];
+    }
+    
+    // Multiple matches - handle double-tab
+    if (line === lastTabLine) {
+      tabCount++;
+    } else {
+      lastTabLine = line;
+      tabCount = 1;
+    }
+    
+    if (tabCount === 1) {
+      // First tab - just ring bell
+      process.stdout.write("\x07");
+      return [[], line];
+    }
+    
+    // Second tab - show completions
+    process.stdout.write("\n" + hits.join("  ") + "\n");
+    rl.prompt();
+    rl.write(line); // Redraw the current line
+    tabCount = 0;
+    
+    return [[], line];
+  },
   terminal: true,
 });
 
