@@ -129,7 +129,7 @@ const rl = readline.createInterface({
 rl.prompt();
 
 rl.on("line", async (command) => {
-  commandHistory.push(`\t${commandHistory.length + 1} ${command}`);
+  commandHistory.push(command);
   const tokens = tokenizeCommand(command);
   const groupedTokens = groupTokens(tokens);
 
@@ -219,9 +219,17 @@ async function mainFn(words, stdin, isFinalCommand = false) {
         }
       }
       break;
-    case "history":
-      logger.log(commandHistory.slice(-words[1]).join("\n"), out);
+    case "history": {
+      const n = words[1] ? parseInt(words[1], 10) : null;
+      const entries = n ? commandHistory.slice(-n) : commandHistory;
+      const startIndex = commandHistory.length - entries.length;
+      const formatted = entries.map((cmd, i) => {
+        const num = startIndex + i + 1;
+        return `    ${num}  ${cmd}`;
+      });
+      logger.log(formatted.join("\n"), out);
       break;
+    }
     default:
       const result = words[0] in EXTERNAL_COMMANDS;
       try {
