@@ -56,25 +56,12 @@ const commandHistory = [];
 let lastTabLine = "";
 let tabCount = 0;
 
-// Enable keypress events
-readline.emitKeypressEvents(process.stdin);
-if (process.stdin.isTTY) {
-  process.stdin.setRawMode(true);
-}
-
-// Create readline without completer
+// Create readline with a proper completer
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
   prompt: "$ ",
-  terminal: true,
-});
-
-// Handle keypress events before readline processes them
-process.stdin.on('keypress', (str, key) => {
-  if (key && key.name === 'tab') {
-    // Prevent default TAB behavior
-    const line = rl.line;
+  completer: (line) => {
     const availableCommands = getAvailableCommands();
     const hits = availableCommands.filter((cmd) => cmd.startsWith(line));
     
@@ -83,17 +70,14 @@ process.stdin.on('keypress', (str, key) => {
       process.stdout.write("\x07");
       tabCount = 0;
       lastTabLine = "";
-      return;
+      return [[], line];
     }
     
     if (hits.length === 1) {
-      // Single match - complete it
-      const completion = hits[0];
-      const remaining = completion.substring(line.length) + " ";
-      rl.write(remaining);
+      // Single match - return it with space
       tabCount = 0;
       lastTabLine = "";
-      return;
+      return [[hits[0] + " "], line];
     }
     
     // Multiple matches - handle double-tab
@@ -107,15 +91,19 @@ process.stdin.on('keypress', (str, key) => {
     if (tabCount === 1) {
       // First tab - just ring bell
       process.stdout.write("\x07");
-      return;
+      return [[], line];
     }
     
     // Second tab - show completions
     process.stdout.write("\n" + hits.join("  ") + "\n");
     rl.prompt();
-    rl.write(line); // Redraw the current line
+    rl.write(line);
+    rl.write(null, { ctrl: true, name: "e" }); // Move cursor to end
     tabCount = 0;
-  }
+    
+    return [[], line];
+  },
+  terminal: true,
 });
 
 rl.prompt();
