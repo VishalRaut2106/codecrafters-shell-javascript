@@ -46,16 +46,21 @@ const completer = (line) => {
   const availableCommands = getAvailableCommands();
   let hits = availableCommands.filter((cmd) => cmd.startsWith(line));
   
-  // Ring bell when there are multiple possible completions
-  if (hits.length > 1) {
-    process.stdout.write("\x07"); // bell
-    // Return completions without space appended for multiple matches
-    return [hits, line];
+  if (hits.length === 0) {
+    return [[], line];
   }
   
-  // For single or no matches, append space to single match
-  hits = hits.map((row) => row + " ");
-  return [hits.length ? hits : [], line];
+  if (hits.length === 1) {
+    // Single match - append space for completion
+    return [[hits[0] + " "], line];
+  }
+  
+  // Multiple matches - ring bell and show options
+  process.stdout.write("\x07"); // bell
+  
+  // Return the completions for readline to display
+  // Readline will handle showing these options
+  return [hits.map(h => h + "  "), line];
 };
 
 module.exports = { completer };
