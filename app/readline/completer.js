@@ -46,9 +46,12 @@ const completer = (line) => {
   const availableCommands = getAvailableCommands();
   let hits = availableCommands.filter((cmd) => cmd.startsWith(line));
   hits = hits.map((row) => row + " ");
-  if (hits.length === 0) {
+  
+  // Ring bell when there are multiple possible completions
+  if (hits.length > 1) {
     process.stdout.write("\x07"); // bell
   }
+  
   return [hits.length ? hits : [], line];
 };
 
