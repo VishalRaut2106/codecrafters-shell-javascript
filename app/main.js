@@ -78,13 +78,28 @@ const rl = readline.createInterface({
     
     if (hits.length === 1) {
       // Single match - return it with space
-      // CRITICAL: Return [[completion], prefixToMatch] where prefixToMatch is what we're completing
       tabCount = 0;
       lastTabLine = "";
       return [[hits[0] + " "], prefixToMatch];
     }
     
-    // Multiple matches - handle double-tab
+    // Multiple matches - find common prefix
+    const commonPrefix = hits.reduce((prefix, cmd) => {
+      let i = 0;
+      while (i < prefix.length && i < cmd.length && prefix[i] === cmd[i]) {
+        i++;
+      }
+      return prefix.substring(0, i);
+    }, hits[0]);
+    
+    // If common prefix is longer than what user typed, complete to it
+    if (commonPrefix.length > prefixToMatch.length) {
+      tabCount = 0;
+      lastTabLine = "";
+      return [[commonPrefix], prefixToMatch];
+    }
+    
+    // Common prefix same as input - handle double-tab to show list
     if (line === lastTabLine) {
       tabCount++;
     } else {
@@ -93,7 +108,7 @@ const rl = readline.createInterface({
     }
     
     if (tabCount === 1) {
-      // First tab - just ring bell
+      // First tab - ring bell (no more to complete)
       process.stdout.write("\x07");
       return [[], prefixToMatch];
     }
