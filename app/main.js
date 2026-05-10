@@ -225,12 +225,11 @@ async function mainFn(words, stdin, isFinalCommand = false) {
     default:
       const result = words[0] in EXTERNAL_COMMANDS;
       try {
-        // For executables with spaces, we need to use shell mode
-        // but properly quote the command
+        // Don't use shell mode - pass the executable name directly
+        // The tokenizer should have properly parsed quoted strings
         const spawnOptions = {
           stdio: ["pipe", "pipe", "pipe"],
           cwd: process.cwd(),
-          shell: process.platform === "win32" ? "cmd.exe" : "/bin/sh",
         };
 
         if (outputFd) {
