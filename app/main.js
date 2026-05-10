@@ -120,7 +120,7 @@ async function mainFn(words, stdin, isFinalCommand = false) {
       const result = words[0] in EXTERNAL_COMMANDS;
       try {
         const spawnOptions = {
-          stdio: ["pipe", isFinalCommand ? "inherit" : "pipe", "inherit"],
+          stdio: ["pipe", "pipe", "pipe"],
           cwd: process.cwd(),
         };
 
@@ -132,31 +132,40 @@ async function mainFn(words, stdin, isFinalCommand = false) {
         }
 
         const childProcess = spawn(words[0], words.slice(1), spawnOptions);
-        // preventing pipeing during first iteration since it causes all sorts of edge cases
+        
+        // Pipe stdin if provided
         if (stdin) {
           stdin.pipe(childProcess.stdin);
+        } else {
+          // Close stdin if no input is being piped
+          childProcess.stdin.end();
         }
 
-        if (outputFd) {
-          fs.closeSync(spawnOptions.stdio[1]);
-        }
-        if (errorFd) {
-          fs.closeSync(spawnOptions.stdio[2]);
+        // Pipe stderr to parent's stderr unless redirected
+        if (!errorFd) {
+          childProcess.stderr.pipe(process.stderr);
         }
 
+        // For the final command, pipe stdout to parent stdout
         if (isFinalCommand) {
+          if (!outputFd) {
+            childProcess.stdout.pipe(process.stdout);
+          }
           await new Promise((resolve, reject) => {
             childProcess.once("close", () => {
               resolve();
             });
           });
+          return outStream;
         }
 
+        // For non-final commands, return the stdout stream
         return childProcess.stdout;
       } catch (error) {
         logger.error(`${words.join(" ")}: command not found`, errorFd);
+        outStream.end();
+        return outStream;
       }
-      break;
   }
 
   outStream.end();
