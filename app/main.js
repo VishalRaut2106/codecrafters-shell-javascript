@@ -228,7 +228,7 @@ async function mainFn(words, stdin, isFinalCommand = false) {
         const spawnOptions = {
           stdio: ["pipe", "pipe", "pipe"],
           cwd: process.cwd(),
-          shell: true, // Use shell to handle quoted executables with spaces
+          shell: process.platform === "win32" ? "cmd.exe" : true,
         };
 
         if (outputFd) {
