@@ -78,9 +78,69 @@ const commandHistory = [];
 let lastAppendedIndex = 0; // tracks how many entries have been appended to file via history -a
 
 const backgroundJobs = [];
+const shellVariables = Object.create(null);
 
 // Store completion rules: map of command -> completer script path
 const completionRules = {};
+
+function isValidIdentifier(name) {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name);
+}
+
+function expandToken(token) {
+  let result = "";
+
+  for (let i = 0; i < token.length; i++) {
+    const char = token[i];
+
+    if (char !== "$") {
+      result += char;
+      continue;
+    }
+
+    if (token[i + 1] === "{") {
+      const closeBraceIndex = token.indexOf("}", i + 2);
+      if (closeBraceIndex === -1) {
+        result += char;
+        continue;
+      }
+
+      const variableName = token.slice(i + 2, closeBraceIndex);
+      if (isValidIdentifier(variableName)) {
+        result += shellVariables[variableName] || "";
+        i = closeBraceIndex;
+        continue;
+      }
+
+      result += token.slice(i, closeBraceIndex + 1);
+      i = closeBraceIndex;
+      continue;
+    }
+
+    let variableName = "";
+    let j = i + 1;
+    while (j < token.length && /[A-Za-z0-9_]/.test(token[j])) {
+      variableName += token[j];
+      j++;
+    }
+
+    if (variableName && /^[A-Za-z_]/.test(variableName)) {
+      result += shellVariables[variableName] || "";
+      i = j - 1;
+      continue;
+    }
+
+    result += char;
+  }
+
+  return result;
+}
+
+function expandWords(words) {
+  return words
+    .map((word) => expandToken(word))
+    .filter((word) => word !== "");
+}
 
 function getNextJobNumber() {
   let nextJobNumber = 1;
@@ -355,7 +415,7 @@ rl.on("line", async (command) => {
   if (runInBackground) {
     tokens.pop();
   }
-  const groupedTokens = groupTokens(tokens);
+  const groupedTokens = groupTokens(expandWords(tokens));
 
   let stdin = null;
   let childStdout = null;
@@ -532,6 +592,35 @@ async function mainFn(words, stdin, isFinalCommand = false, runInBackground = fa
         break;
       }
       break;
+    case "declare": {
+      if (words[1] === "-p" && words[2]) {
+        const variableName = words[2];
+        if (Object.prototype.hasOwnProperty.call(shellVariables, variableName)) {
+          logger.log(`declare -- ${variableName}="${shellVariables[variableName]}"`, out);
+        } else {
+          logger.error(`declare: ${variableName}: not found`, errorFd);
+        }
+        break;
+      }
+
+      for (const argument of words.slice(1)) {
+        const equalsIndex = argument.indexOf("=");
+        if (equalsIndex === -1) {
+          continue;
+        }
+
+        const variableName = argument.slice(0, equalsIndex);
+        const variableValue = argument.slice(equalsIndex + 1);
+        if (!isValidIdentifier(variableName)) {
+          logger.error(`declare: \`${argument}\': not a valid identifier`, errorFd);
+          continue;
+        }
+
+        shellVariables[variableName] = variableValue;
+      }
+
+      break;
+    }
     default:
       const result = words[0] in EXTERNAL_COMMANDS;
       try {
