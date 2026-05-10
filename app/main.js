@@ -118,46 +118,42 @@ async function mainFn(words, stdin, isFinalCommand = false) {
       break;
     default:
       const result = words[0] in EXTERNAL_COMMANDS;
-      if (result) {
-        try {
-          const spawnOptions = {
-            stdio: ["pipe", isFinalCommand ? "inherit" : "pipe", "inherit"],
-            cwd: process.cwd(),
-          };
+      try {
+        const spawnOptions = {
+          stdio: ["pipe", isFinalCommand ? "inherit" : "pipe", "inherit"],
+          cwd: process.cwd(),
+        };
 
-          if (outputFd) {
-            spawnOptions.stdio[1] = outputFd;
-          }
-          if (errorFd) {
-            spawnOptions.stdio[2] = errorFd;
-          }
-
-          const childProcess = spawn(words[0], words.slice(1), spawnOptions);
-          // preventing pipeing during first iteration since it causes all sorts of edge cases
-          if (stdin) {
-            stdin.pipe(childProcess.stdin);
-          }
-
-          if (outputFd) {
-            fs.closeSync(spawnOptions.stdio[1]);
-          }
-          if (errorFd) {
-            fs.closeSync(spawnOptions.stdio[2]);
-          }
-
-          if (isFinalCommand) {
-            await new Promise((resolve, reject) => {
-              childProcess.once("close", () => {
-                resolve();
-              });
-            });
-          }
-
-          return childProcess.stdout;
-        } catch (error) {
-          console.log(error);
+        if (outputFd) {
+          spawnOptions.stdio[1] = outputFd;
         }
-      } else {
+        if (errorFd) {
+          spawnOptions.stdio[2] = errorFd;
+        }
+
+        const childProcess = spawn(words[0], words.slice(1), spawnOptions);
+        // preventing pipeing during first iteration since it causes all sorts of edge cases
+        if (stdin) {
+          stdin.pipe(childProcess.stdin);
+        }
+
+        if (outputFd) {
+          fs.closeSync(spawnOptions.stdio[1]);
+        }
+        if (errorFd) {
+          fs.closeSync(spawnOptions.stdio[2]);
+        }
+
+        if (isFinalCommand) {
+          await new Promise((resolve, reject) => {
+            childProcess.once("close", () => {
+              resolve();
+            });
+          });
+        }
+
+        return childProcess.stdout;
+      } catch (error) {
         logger.error(`${words.join(" ")}: command not found`, errorFd);
       }
       break;
