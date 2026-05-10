@@ -73,11 +73,16 @@ const rl = readline.createInterface({
     }
     
     if (hits.length === 1) {
-      // Single match - return it WITHOUT space, let readline handle it
+      // Single match - manually write the completion
       tabCount = 0;
       lastTabLine = "";
-      // Try returning just the command without space
-      callback(null, [[hits[0]], line]);
+      const completion = hits[0];
+      const remaining = completion.substring(line.length) + " ";
+      // Manually write the remaining part
+      setImmediate(() => {
+        rl.write(remaining);
+      });
+      callback(null, [[], line]);
       return;
     }
     
