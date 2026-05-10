@@ -45,13 +45,16 @@ function getAvailableCommands() {
 const completer = (line) => {
   const availableCommands = getAvailableCommands();
   let hits = availableCommands.filter((cmd) => cmd.startsWith(line));
-  hits = hits.map((row) => row + " ");
   
   // Ring bell when there are multiple possible completions
   if (hits.length > 1) {
     process.stdout.write("\x07"); // bell
+    // Return completions without space appended for multiple matches
+    return [hits, line];
   }
   
+  // For single or no matches, append space to single match
+  hits = hits.map((row) => row + " ");
   return [hits.length ? hits : [], line];
 };
 
