@@ -164,6 +164,8 @@ if (process.env.HISTFILE) {
     }
     // rl.history needs to be newest-first for readline navigation
     rl.history.reverse();
+    // Mark all loaded entries as already "appended" so history -a only writes new ones
+    lastAppendedIndex = commandHistory.length;
   } catch (_) {
     // HISTFILE doesn't exist yet, that's fine
   }
@@ -239,6 +241,15 @@ async function mainFn(words, stdin, isFinalCommand = false) {
 
   switch (words[0]) {
     case "exit":
+      // Save new history entries to HISTFILE before exiting
+      if (process.env.HISTFILE) {
+        try {
+          const newEntries = commandHistory.slice(lastAppendedIndex);
+          if (newEntries.length > 0) {
+            fs.appendFileSync(process.env.HISTFILE, newEntries.join("\n") + "\n", "utf8");
+          }
+        } catch (_) {}
+      }
       process.exit();
     case "pwd":
       logger.log(process.cwd(), out);
