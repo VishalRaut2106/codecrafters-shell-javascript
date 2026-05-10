@@ -32,14 +32,12 @@ const rl = readline.createInterface({
     }
     
     if (hits.length === 1) {
-      // Single match - manually apply completion
+      // Single match - manually apply completion by writing the remaining part
       tabCount = 0;
       lastTabLine = "";
-      // Manually write the completion
-      const completion = hits[0] + " ";
-      // Clear the current line and write the completion
-      rl.write(null, { ctrl: true, name: "u" }); // Clear line
-      rl.write(completion);
+      const completion = hits[0];
+      const remaining = completion.substring(line.length) + " ";
+      rl.write(remaining);
       return [[], line];
     }
     
