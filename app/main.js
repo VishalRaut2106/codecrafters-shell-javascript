@@ -98,25 +98,35 @@ const rl = readline.createInterface({
       prefixToMatch = line;
       getCandidates = () => getAvailableCommands().filter(cmd => cmd.startsWith(prefixToMatch));
     } else {
-      // Subsequent argument: complete against CWD entries
+      // Subsequent argument: complete against directory entries
       // Extract the last word (text after the last space)
       const lastSpaceIdx = line.lastIndexOf(" ");
       prefixToMatch = line.slice(lastSpaceIdx + 1);
+
+      // Split prefix into directory part and filename part
+      const nodePath = require("path");
+      const lastSlashIdx = prefixToMatch.lastIndexOf("/");
+      const dirPart = lastSlashIdx !== -1 ? prefixToMatch.slice(0, lastSlashIdx + 1) : "";
+      const filePart = lastSlashIdx !== -1 ? prefixToMatch.slice(lastSlashIdx + 1) : prefixToMatch;
+      const searchDir = dirPart
+        ? nodePath.resolve(process.cwd(), dirPart)
+        : process.cwd();
+
       getCandidates = () => {
         let entries;
         try {
-          entries = fs.readdirSync(process.cwd());
+          entries = fs.readdirSync(searchDir);
         } catch (_) {
           return [];
         }
         return entries
-          .filter(e => e.startsWith(prefixToMatch))
+          .filter(e => e.startsWith(filePart))
           .map(e => {
             try {
-              const stat = fs.statSync(require("path").join(process.cwd(), e));
-              return stat.isDirectory() ? e + "/" : e + " ";
+              const stat = fs.statSync(nodePath.join(searchDir, e));
+              return dirPart + e + (stat.isDirectory() ? "/" : " ");
             } catch (_) {
-              return e + " ";
+              return dirPart + e + " ";
             }
           });
       };
