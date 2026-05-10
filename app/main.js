@@ -62,22 +62,25 @@ const rl = readline.createInterface({
   output: process.stdout,
   prompt: "$ ",
   completer: (line) => {
+    // Extract the prefix to match (just the command part, not the whole line)
+    const prefixToMatch = line;
     const availableCommands = getAvailableCommands();
-    const hits = availableCommands.filter((cmd) => cmd.startsWith(line));
+    const hits = availableCommands.filter((cmd) => cmd.startsWith(prefixToMatch));
     
     if (hits.length === 0) {
       // No matches - ring bell
       process.stdout.write("\x07");
       tabCount = 0;
       lastTabLine = "";
-      return [[], line];
+      return [[], prefixToMatch];
     }
     
     if (hits.length === 1) {
       // Single match - return it with space
+      // CRITICAL: Return [[completion], prefixToMatch] where prefixToMatch is what we're completing
       tabCount = 0;
       lastTabLine = "";
-      return [[hits[0] + " "], line];
+      return [[hits[0] + " "], prefixToMatch];
     }
     
     // Multiple matches - handle double-tab
@@ -91,7 +94,7 @@ const rl = readline.createInterface({
     if (tabCount === 1) {
       // First tab - just ring bell
       process.stdout.write("\x07");
-      return [[], line];
+      return [[], prefixToMatch];
     }
     
     // Second tab - show completions
@@ -101,7 +104,7 @@ const rl = readline.createInterface({
     rl.write(null, { ctrl: true, name: "e" }); // Move cursor to end
     tabCount = 0;
     
-    return [[], line];
+    return [[], prefixToMatch];
   },
   terminal: true,
 });
