@@ -73,16 +73,12 @@ const rl = readline.createInterface({
     }
     
     if (hits.length === 1) {
-      // Single match - manually write the completion
+      // Single match - return the completion WITH space
       tabCount = 0;
       lastTabLine = "";
-      const completion = hits[0];
-      const remaining = completion.substring(line.length) + " ";
-      // Manually write the remaining part
-      setImmediate(() => {
-        rl.write(remaining);
-      });
-      callback(null, [[], line]);
+      const completion = hits[0] + " ";
+      // Return the completion so readline applies it
+      callback(null, [[completion], line]);
       return;
     }
     
