@@ -79,6 +79,9 @@ let lastAppendedIndex = 0; // tracks how many entries have been appended to file
 
 const backgroundJobs = [];
 
+// Store completion rules: map of command -> completer script path
+const completionRules = {};
+
 function getNextJobNumber() {
   let nextJobNumber = 1;
   while (backgroundJobs.some((job) => job.number === nextJobNumber)) {
@@ -460,6 +463,31 @@ async function mainFn(words, stdin, isFinalCommand = false, runInBackground = fa
     }
     case "jobs":
       printJobsAndReapCompleted();
+      break;
+    case "complete":
+      // complete -C <script> <command>: register a completer script for a command
+      if (words[1] === "-C" && words[2] && words[3]) {
+        const completerScript = words[2];
+        const commandName = words[3];
+        completionRules[commandName] = completerScript;
+        break;
+      }
+      // complete -r <command>: remove completion rule for a command
+      if (words[1] === "-r" && words[2]) {
+        const commandName = words[2];
+        delete completionRules[commandName];
+        break;
+      }
+      // complete -p <command>: print completion rule for a command
+      if (words[1] === "-p" && words[2]) {
+        const commandName = words[2];
+        if (commandName in completionRules) {
+          logger.log(`complete -C ${completionRules[commandName]} ${commandName}`, out);
+        } else {
+          logger.error(`complete: ${commandName}: no completion specification`, errorFd);
+        }
+        break;
+      }
       break;
     default:
       const result = words[0] in EXTERNAL_COMMANDS;
