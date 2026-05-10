@@ -603,8 +603,8 @@ async function mainFn(words, stdin, isFinalCommand = false, runInBackground = fa
         if (Object.prototype.hasOwnProperty.call(shellVariables, variableName)) {
           logger.log(`declare -- ${variableName}="${shellVariables[variableName]}"`, out);
         } else {
-        }
           logger.error(`declare: ${variableName}: not found`, errorFd);
+        }
         break;
       }
 
