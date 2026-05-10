@@ -171,44 +171,87 @@ const rl = readline.createInterface({
 
     let prefixToMatch;
     let getCandidates;
+    let commandName = "";
 
     if (!isArgCompletion) {
       // First word: complete against available commands
       prefixToMatch = line;
       getCandidates = () => getAvailableCommands().filter(cmd => cmd.startsWith(prefixToMatch));
     } else {
-      // Subsequent argument: complete against directory entries
-      // Extract the last word (text after the last space)
-      const lastSpaceIdx = line.lastIndexOf(" ");
-      prefixToMatch = line.slice(lastSpaceIdx + 1);
-
-      // Split prefix into directory part and filename part
-      const nodePath = require("path");
-      const lastSlashIdx = prefixToMatch.lastIndexOf("/");
-      const dirPart = lastSlashIdx !== -1 ? prefixToMatch.slice(0, lastSlashIdx + 1) : "";
-      const filePart = lastSlashIdx !== -1 ? prefixToMatch.slice(lastSlashIdx + 1) : prefixToMatch;
-      const searchDir = dirPart
-        ? nodePath.resolve(process.cwd(), dirPart)
-        : process.cwd();
-
-      getCandidates = () => {
-        let entries;
-        try {
-          entries = fs.readdirSync(searchDir);
-        } catch (_) {
-          return [];
-        }
-        return entries
-          .filter(e => e.startsWith(filePart))
-          .map(e => {
-            try {
-              const stat = fs.statSync(nodePath.join(searchDir, e));
-              return dirPart + e + (stat.isDirectory() ? "/" : " ");
-            } catch (_) {
-              return dirPart + e + " ";
+      // Subsequent argument: check if command has a registered completer
+      commandName = line.substring(0, spaceIndex);
+      
+      // If completer is registered for this command, use it
+      if (commandName in completionRules) {
+        const completerScript = completionRules[commandName];
+        const lastSpaceIdx = line.lastIndexOf(" ");
+        const currentWord = line.slice(lastSpaceIdx + 1);
+        const previousWord = line.substring(0, lastSpaceIdx).split(" ").slice(-1)[0] || "";
+        
+        getCandidates = () => {
+          try {
+            const { spawnSync } = require("child_process");
+            const env = Object.assign({}, process.env, {
+              COMP_LINE: line,
+              COMP_POINT: line.length.toString(),
+            });
+            
+            const result = spawnSync(completerScript, [commandName, currentWord, previousWord], {
+              encoding: "utf8",
+              env: env,
+            });
+            
+            if (result.error || result.status !== 0) {
+              return [];
             }
-          });
-      };
+            
+            const output = result.stdout;
+            if (!output) {
+              return [];
+            }
+            
+            const candidates = output.split("\n").filter(line => line.trim() !== "");
+            return candidates.map(candidate => candidate + " ");
+          } catch (err) {
+            return [];
+          }
+        };
+        
+        prefixToMatch = line.slice(line.lastIndexOf(" ") + 1);
+      } else {
+        // Fallback to file/directory completion
+        // Extract the last word (text after the last space)
+        const lastSpaceIdx = line.lastIndexOf(" ");
+        prefixToMatch = line.slice(lastSpaceIdx + 1);
+
+        // Split prefix into directory part and filename part
+        const nodePath = require("path");
+        const lastSlashIdx = prefixToMatch.lastIndexOf("/");
+        const dirPart = lastSlashIdx !== -1 ? prefixToMatch.slice(0, lastSlashIdx + 1) : "";
+        const filePart = lastSlashIdx !== -1 ? prefixToMatch.slice(lastSlashIdx + 1) : prefixToMatch;
+        const searchDir = dirPart
+          ? nodePath.resolve(process.cwd(), dirPart)
+          : process.cwd();
+
+        getCandidates = () => {
+          let entries;
+          try {
+            entries = fs.readdirSync(searchDir);
+          } catch (_) {
+            return [];
+          }
+          return entries
+            .filter(e => e.startsWith(filePart))
+            .map(e => {
+              try {
+                const stat = fs.statSync(nodePath.join(searchDir, e));
+                return dirPart + e + (stat.isDirectory() ? "/" : " ");
+              } catch (_) {
+                return dirPart + e + " ";
+              }
+            });
+        };
+      }
     }
 
     const hits = getCandidates();
