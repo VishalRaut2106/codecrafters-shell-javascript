@@ -85,4 +85,4 @@ const completer = (line) => {
   return [[], line];
 };
 
-module.exports = { completer };
+module.exports = { completer, getAvailableCommands };

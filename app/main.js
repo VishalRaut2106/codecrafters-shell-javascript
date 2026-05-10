@@ -6,7 +6,7 @@ const {
   tokenizeCommand,
   groupTokens,
 } = require("./utility");
-const { completer } = require("./readline/completer");
+const { completer, getAvailableCommands } = require("./readline/completer");
 const { BUILTIN_COMMANDS, EXTERNAL_COMMANDS } = require("./constants");
 const logger = require("./logger");
 const { PassThrough } = require("stream");
