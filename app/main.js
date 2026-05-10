@@ -152,6 +152,23 @@ const rl = readline.createInterface({
 
 rl.prompt();
 
+// Load history from HISTFILE on startup
+if (process.env.HISTFILE) {
+  try {
+    const content = require("fs").readFileSync(process.env.HISTFILE, "utf8");
+    const lines = content.split("\n").filter(line => line.trim() !== "");
+    for (const line of lines) {
+      commandHistory.push(line);
+      rl.history = rl.history || [];
+      rl.history.push(line); // push (not unshift) to keep oldest-first for up-arrow
+    }
+    // rl.history needs to be newest-first for readline navigation
+    rl.history.reverse();
+  } catch (_) {
+    // HISTFILE doesn't exist yet, that's fine
+  }
+}
+
 rl.on("line", async (command) => {
   commandHistory.push(command);
   // Manually add to readline's internal history for up-arrow recall
