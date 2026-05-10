@@ -14,6 +14,29 @@ const { KNOWN_COMMANDS } = require("./functions/type");
 let cachedCommands = null;
 let lastPathEnv = null;
 
+function findInPath(cmd) {
+  const pathEnv = process.env.PATH;
+  if (!pathEnv) return null;
+  const dirs = pathEnv.split(process.platform === "win32" ? ";" : ":");
+  for (const dir of dirs) {
+    try {
+      const files = fs.readdirSync(dir);
+      for (const file of files) {
+        if (file === cmd) {
+          const fullPath = require("path").join(dir, file);
+          try {
+            fs.accessSync(fullPath, fs.constants.X_OK);
+            return fullPath;
+          } catch (_) {
+            // not executable, keep searching
+          }
+        }
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
 function getAvailableCommands() {
   const pathEnv = process.env.PATH;
   
@@ -210,10 +233,9 @@ async function mainFn(words, stdin, isFinalCommand = false) {
       if (BUILTIN_COMMANDS.includes(words[1])) {
         logger.log(`${words[1]} is a shell builtin`, out);
       } else {
-        const result = words[1] in EXTERNAL_COMMANDS;
-
-        if (result) {
-          logger.log(`${words[1]} is ${EXTERNAL_COMMANDS[words[1]]}`, out);
+        const typePath = findInPath(words[1]);
+        if (typePath) {
+          logger.log(`${words[1]} is ${typePath}`, out);
         } else {
           logger.error(`${words[1]}: not found`, errorFd);
         }
