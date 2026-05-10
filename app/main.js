@@ -56,11 +56,12 @@ const commandHistory = [];
 let lastTabLine = "";
 let tabCount = 0;
 
-// Create readline with a proper completer
+// Create readline with a proper completer and history enabled
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
   prompt: "$ ",
+  historySize: 1000, // Enable history with size limit
   completer: (line) => {
     // Extract the prefix to match (just the command part, not the whole line)
     const prefixToMatch = line;
