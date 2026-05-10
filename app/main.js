@@ -87,11 +87,43 @@ const rl = readline.createInterface({
   prompt: "$ ",
   historySize: 1000, // Enable history with size limit
   completer: (line) => {
-    // Extract the prefix to match (just the command part, not the whole line)
-    const prefixToMatch = line;
-    const availableCommands = getAvailableCommands();
-    const hits = availableCommands.filter((cmd) => cmd.startsWith(prefixToMatch));
-    
+    const spaceIndex = line.indexOf(" ");
+    const isArgCompletion = spaceIndex !== -1;
+
+    let prefixToMatch;
+    let getCandidates;
+
+    if (!isArgCompletion) {
+      // First word: complete against available commands
+      prefixToMatch = line;
+      getCandidates = () => getAvailableCommands().filter(cmd => cmd.startsWith(prefixToMatch));
+    } else {
+      // Subsequent argument: complete against CWD entries
+      // Extract the last word (text after the last space)
+      const lastSpaceIdx = line.lastIndexOf(" ");
+      prefixToMatch = line.slice(lastSpaceIdx + 1);
+      getCandidates = () => {
+        let entries;
+        try {
+          entries = fs.readdirSync(process.cwd());
+        } catch (_) {
+          return [];
+        }
+        return entries
+          .filter(e => e.startsWith(prefixToMatch))
+          .map(e => {
+            try {
+              const stat = fs.statSync(require("path").join(process.cwd(), e));
+              return stat.isDirectory() ? e + "/" : e + " ";
+            } catch (_) {
+              return e + " ";
+            }
+          });
+      };
+    }
+
+    const hits = getCandidates();
+
     if (hits.length === 0) {
       // No matches - ring bell
       process.stdout.write("\x07");
@@ -99,30 +131,32 @@ const rl = readline.createInterface({
       lastTabLine = "";
       return [[], prefixToMatch];
     }
-    
+
     if (hits.length === 1) {
-      // Single match - return it with space
+      // Single match - return it (suffix already added: space or /)
       tabCount = 0;
       lastTabLine = "";
-      return [[hits[0] + " "], prefixToMatch];
-    }
-    
-    // Multiple matches - find common prefix
-    const commonPrefix = hits.reduce((prefix, cmd) => {
-      let i = 0;
-      while (i < prefix.length && i < cmd.length && prefix[i] === cmd[i]) {
-        i++;
+      if (!isArgCompletion) {
+        return [[hits[0] + " "], prefixToMatch];
       }
+      return [[hits[0]], prefixToMatch];
+    }
+
+    // Multiple matches - find common prefix (strip trailing suffix for comparison)
+    const hitsRaw = hits.map(h => h.replace(/[ /]$/, ""));
+    const commonPrefix = hitsRaw.reduce((prefix, cmd) => {
+      let i = 0;
+      while (i < prefix.length && i < cmd.length && prefix[i] === cmd[i]) i++;
       return prefix.substring(0, i);
-    }, hits[0]);
-    
+    }, hitsRaw[0]);
+
     // If common prefix is longer than what user typed, complete to it
     if (commonPrefix.length > prefixToMatch.length) {
       tabCount = 0;
       lastTabLine = "";
       return [[commonPrefix], prefixToMatch];
     }
-    
+
     // Common prefix same as input - handle double-tab to show list
     if (line === lastTabLine) {
       tabCount++;
@@ -130,21 +164,21 @@ const rl = readline.createInterface({
       lastTabLine = line;
       tabCount = 1;
     }
-    
+
     if (tabCount === 1) {
       // First tab - ring bell (no more to complete)
       process.stdout.write("\x07");
       return [[], prefixToMatch];
     }
-    
-    // Second tab - show completions
+
+    // Second tab - show completions (display without trailing space, keep / for dirs)
+    const displayHits = hits.map(h => h.replace(/ $/, ""));
     const lineToRestore = line;
-    process.stdout.write("\n" + hits.join("  ") + "\n");
-    // Write the prompt and line content
+    process.stdout.write("\n" + displayHits.join("  ") + "\n");
     rl.prompt();
     process.stdout.write(lineToRestore);
     tabCount = 0;
-    
+
     return [[], prefixToMatch];
   },
   terminal: true,
