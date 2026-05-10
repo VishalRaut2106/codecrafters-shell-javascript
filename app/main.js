@@ -77,6 +77,82 @@ function getAvailableCommands() {
 const commandHistory = [];
 let lastAppendedIndex = 0; // tracks how many entries have been appended to file via history -a
 
+const backgroundJobs = [];
+
+function getNextJobNumber() {
+  let nextJobNumber = 1;
+  while (backgroundJobs.some((job) => job.number === nextJobNumber)) {
+    nextJobNumber++;
+  }
+  return nextJobNumber;
+}
+
+function getJobMarker(job, sortedJobs) {
+  if (sortedJobs.length === 1) {
+    return "+";
+  }
+
+  const latestJob = sortedJobs[sortedJobs.length - 1];
+  if (job.number === latestJob.number) {
+    return "+";
+  }
+
+  const previousJob = sortedJobs[sortedJobs.length - 2];
+  if (previousJob && job.number === previousJob.number) {
+    return "-";
+  }
+
+  return " ";
+}
+
+function formatJobLine(job, sortedJobs) {
+  const marker = getJobMarker(job, sortedJobs);
+  const status = job.status.padEnd(24);
+  const command = job.status === "Running" ? `${job.command} &` : job.command;
+  return `[${job.number}]${marker}  ${status}${command}`;
+}
+
+function removeCompletedJobs() {
+  for (let i = backgroundJobs.length - 1; i >= 0; i--) {
+    if (backgroundJobs[i].status === "Done") {
+      backgroundJobs.splice(i, 1);
+    }
+  }
+}
+
+function renderBackgroundJobLines(includeRunning) {
+  const sortedJobs = backgroundJobs.slice().sort((left, right) => left.number - right.number);
+  const lines = [];
+
+  for (const job of sortedJobs) {
+    if (!includeRunning && job.status !== "Done") {
+      continue;
+    }
+
+    lines.push(formatJobLine(job, sortedJobs));
+  }
+
+  return lines;
+}
+
+async function reapJobsBeforePrompt() {
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const doneLines = renderBackgroundJobLines(false);
+  if (doneLines.length > 0) {
+    process.stdout.write(`${doneLines.join("\n")}\n`);
+    removeCompletedJobs();
+  }
+}
+
+function printJobsAndReapCompleted() {
+  const lines = renderBackgroundJobLines(true);
+  if (lines.length > 0) {
+    process.stdout.write(`${lines.join("\n")}\n`);
+  }
+  removeCompletedJobs();
+}
+
 let lastTabLine = "";
 let tabCount = 0;
 
@@ -240,7 +316,7 @@ rl.on("line", async (command) => {
 
   for (let i = 0; i < groupedTokens.length; i++) {
     if (i === groupedTokens.length - 1) {
-      childStdout = await mainFn(groupedTokens[i], stdin, true, runInBackground);
+      childStdout = await mainFn(groupedTokens[i], stdin, true, runInBackground, command);
       break;
     }
 
@@ -248,10 +324,11 @@ rl.on("line", async (command) => {
     stdin = childStdout;
   }
 
+  await reapJobsBeforePrompt();
   rl.prompt();
 });
 
-async function mainFn(words, stdin, isFinalCommand = false, runInBackground = false) {
+async function mainFn(words, stdin, isFinalCommand = false, runInBackground = false, originalCommand = "") {
   const outStream = new PassThrough();
   if (isFinalCommand && !runInBackground) {
     outStream.pipe(process.stdout);
@@ -382,6 +459,7 @@ async function mainFn(words, stdin, isFinalCommand = false, runInBackground = fa
       break;
     }
     case "jobs":
+      printJobsAndReapCompleted();
       break;
     default:
       const result = words[0] in EXTERNAL_COMMANDS;
@@ -389,7 +467,11 @@ async function mainFn(words, stdin, isFinalCommand = false, runInBackground = fa
         // Don't use shell mode - pass the executable name directly
         // The tokenizer should have properly parsed quoted strings
         const spawnOptions = {
-          stdio: ["pipe", runInBackground ? "ignore" : "pipe", "pipe"],
+          stdio: [
+            "pipe",
+            runInBackground ? "inherit" : "pipe",
+            runInBackground ? "inherit" : "pipe",
+          ],
           cwd: process.cwd(),
         };
 
@@ -403,7 +485,21 @@ async function mainFn(words, stdin, isFinalCommand = false, runInBackground = fa
         const childProcess = spawn(words[0], words.slice(1), spawnOptions);
 
         if (runInBackground) {
-          console.log(`[1] ${childProcess.pid}`);
+          const jobNumber = getNextJobNumber();
+          const commandText = originalCommand.replace(/\s*&\s*$/, "").trimEnd();
+          const backgroundJob = {
+            number: jobNumber,
+            pid: childProcess.pid,
+            command: commandText,
+            status: "Running",
+          };
+
+          backgroundJobs.push(backgroundJob);
+          console.log(`[${jobNumber}] ${childProcess.pid}`);
+
+          childProcess.once("exit", () => {
+            backgroundJob.status = "Done";
+          });
         }
 
         // Handle ENOENT - command not found (async error event)
@@ -422,9 +518,11 @@ async function mainFn(words, stdin, isFinalCommand = false, runInBackground = fa
           childProcess.stdin.end();
         }
 
-        // Pipe stderr to parent's stderr unless redirected
-        if (!errorFd) {
-          childProcess.stderr.pipe(process.stderr);
+        if (!runInBackground) {
+          // Pipe stderr to parent's stderr unless redirected
+          if (!errorFd) {
+            childProcess.stderr.pipe(process.stderr);
+          }
         }
 
         // For the final command, pipe stdout to parent stdout
