@@ -199,7 +199,12 @@ function renderBackgroundJobLines(includeRunning) {
 }
 
 async function reapJobsBeforePrompt() {
-  await new Promise((resolve) => setImmediate(resolve));
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await new Promise((resolve) => setImmediate(resolve));
+    if (renderBackgroundJobLines(false).length > 0) {
+      break;
+    }
+  }
 
   const doneLines = renderBackgroundJobLines(false);
   if (doneLines.length > 0) {
