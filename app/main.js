@@ -270,7 +270,15 @@ async function mainFn(words, stdin, isFinalCommand = false) {
         }
 
         const childProcess = spawn(words[0], words.slice(1), spawnOptions);
-        
+
+        // Handle ENOENT - command not found (async error event)
+        childProcess.on("error", (err) => {
+          if (err.code === "ENOENT") {
+            logger.error(`${words[0]}: command not found`, errorFd);
+          }
+          outStream.end();
+        });
+
         // Pipe stdin if provided
         if (stdin) {
           stdin.pipe(childProcess.stdin);
@@ -289,10 +297,9 @@ async function mainFn(words, stdin, isFinalCommand = false) {
           if (!outputFd) {
             childProcess.stdout.pipe(process.stdout);
           }
-          await new Promise((resolve, reject) => {
-            childProcess.once("close", () => {
-              resolve();
-            });
+          await new Promise((resolve) => {
+            childProcess.once("close", resolve);
+            childProcess.once("error", resolve);
           });
           return outStream;
         }
