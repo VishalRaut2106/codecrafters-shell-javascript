@@ -60,7 +60,7 @@ const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
   prompt: "$ ",
-  completer: (line) => {
+  completer: (line, callback) => {
     const availableCommands = getAvailableCommands();
     let hits = availableCommands.filter((cmd) => cmd.startsWith(line));
     
@@ -68,15 +68,17 @@ const rl = readline.createInterface({
       process.stdout.write("\x07"); // bell
       tabCount = 0;
       lastTabLine = "";
-      return [[], line];
+      callback(null, [[], line]);
+      return;
     }
     
     if (hits.length === 1) {
-      // Single match - return it in the format readline expects
+      // Single match - return it WITHOUT space, let readline handle it
       tabCount = 0;
       lastTabLine = "";
-      // Return the full completion with space
-      return [[hits[0] + " "], line];
+      // Try returning just the command without space
+      callback(null, [[hits[0]], line]);
+      return;
     }
     
     // Multiple matches - handle double-tab
@@ -90,7 +92,8 @@ const rl = readline.createInterface({
     if (tabCount === 1) {
       // First tab - just ring bell
       process.stdout.write("\x07");
-      return [[], line];
+      callback(null, [[], line]);
+      return;
     }
     
     // Second tab - show completions
@@ -99,7 +102,7 @@ const rl = readline.createInterface({
     rl.write(line); // Redraw the current line
     tabCount = 0;
     
-    return [[], line];
+    callback(null, [[], line]);
   },
   terminal: true,
 });
