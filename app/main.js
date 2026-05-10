@@ -185,9 +185,13 @@ const rl = readline.createInterface({
     const displayHits = hits.map(h => h.replace(/ $/, ""));
     const lineToRestore = line;
     process.stdout.write("\n" + displayHits.join("  ") + "\n");
-    rl.prompt();
-    process.stdout.write(lineToRestore);
     tabCount = 0;
+    rl.prompt();
+    // Use rl.write to restore the line into readline's internal buffer
+    // so subsequent keypresses are inserted at the correct position
+    if (lineToRestore) {
+      rl.write(lineToRestore);
+    }
 
     return [[], prefixToMatch];
   },
