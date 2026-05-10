@@ -185,10 +185,11 @@ const rl = readline.createInterface({
     const displayHits = hits.map(h => h.replace(/ $/, "")).sort();
     process.stdout.write("\n" + displayHits.join("  ") + "\n");
     tabCount = 0;
-    rl.prompt();
-    // Write the line prefix back to stdout for display only
-    // readline will keep its own buffer intact via the return value below
-    process.stdout.write(line);
+    // Redraw prompt + current line manually, then sync readline's cursor
+    process.stdout.write("$ " + line);
+    // Move readline's internal cursor to end of line so next keypress appends correctly
+    rl.line = line;
+    rl.cursor = line.length;
 
     return [[], prefixToMatch];
   },
