@@ -56,7 +56,13 @@ const commandHistory = [];
 let lastTabLine = "";
 let tabCount = 0;
 
-// Create readline without completer - we'll handle TAB manually
+// Enable keypress events
+readline.emitKeypressEvents(process.stdin);
+if (process.stdin.isTTY) {
+  process.stdin.setRawMode(true);
+}
+
+// Create readline without completer
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
@@ -64,11 +70,10 @@ const rl = readline.createInterface({
   terminal: true,
 });
 
-// Handle TAB key manually using _ttyWrite
-const originalTtyWrite = rl._ttyWrite.bind(rl);
-rl._ttyWrite = function(s, key) {
+// Handle keypress events before readline processes them
+process.stdin.on('keypress', (str, key) => {
   if (key && key.name === 'tab') {
-    // Get the current line
+    // Prevent default TAB behavior
     const line = rl.line;
     const availableCommands = getAvailableCommands();
     const hits = availableCommands.filter((cmd) => cmd.startsWith(line));
@@ -110,12 +115,8 @@ rl._ttyWrite = function(s, key) {
     rl.prompt();
     rl.write(line); // Redraw the current line
     tabCount = 0;
-    return;
   }
-  
-  // For non-TAB keys, use original behavior
-  return originalTtyWrite(s, key);
-};
+});
 
 rl.prompt();
 
