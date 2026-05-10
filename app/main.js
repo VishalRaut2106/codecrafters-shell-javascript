@@ -229,6 +229,10 @@ rl.on("line", async (command) => {
     }
   }
   const tokens = tokenizeCommand(command);
+  const runInBackground = tokens[tokens.length - 1] === "&";
+  if (runInBackground) {
+    tokens.pop();
+  }
   const groupedTokens = groupTokens(tokens);
 
   let stdin = null;
@@ -236,7 +240,7 @@ rl.on("line", async (command) => {
 
   for (let i = 0; i < groupedTokens.length; i++) {
     if (i === groupedTokens.length - 1) {
-      childStdout = await mainFn(groupedTokens[i], stdin, true);
+      childStdout = await mainFn(groupedTokens[i], stdin, true, runInBackground);
       break;
     }
 
@@ -247,9 +251,9 @@ rl.on("line", async (command) => {
   rl.prompt();
 });
 
-async function mainFn(words, stdin, isFinalCommand = false) {
+async function mainFn(words, stdin, isFinalCommand = false, runInBackground = false) {
   const outStream = new PassThrough();
-  if (isFinalCommand) {
+  if (isFinalCommand && !runInBackground) {
     outStream.pipe(process.stdout);
   }
 
@@ -385,7 +389,7 @@ async function mainFn(words, stdin, isFinalCommand = false) {
         // Don't use shell mode - pass the executable name directly
         // The tokenizer should have properly parsed quoted strings
         const spawnOptions = {
-          stdio: ["pipe", "pipe", "pipe"],
+          stdio: ["pipe", runInBackground ? "ignore" : "pipe", "pipe"],
           cwd: process.cwd(),
         };
 
@@ -397,6 +401,10 @@ async function mainFn(words, stdin, isFinalCommand = false) {
         }
 
         const childProcess = spawn(words[0], words.slice(1), spawnOptions);
+
+        if (runInBackground) {
+          console.log(`[1] ${childProcess.pid}`);
+        }
 
         // Handle ENOENT - command not found (async error event)
         childProcess.on("error", (err) => {
@@ -420,7 +428,7 @@ async function mainFn(words, stdin, isFinalCommand = false) {
         }
 
         // For the final command, pipe stdout to parent stdout
-        if (isFinalCommand) {
+        if (isFinalCommand && !runInBackground) {
           if (!outputFd) {
             childProcess.stdout.pipe(process.stdout);
           }
@@ -429,6 +437,10 @@ async function mainFn(words, stdin, isFinalCommand = false) {
             childProcess.once("error", resolve);
           });
           return outStream;
+        }
+
+        if (runInBackground) {
+          return null;
         }
 
         // For non-final commands, return the stdout stream
