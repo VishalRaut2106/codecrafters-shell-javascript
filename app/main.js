@@ -267,6 +267,18 @@ async function mainFn(words, stdin, isFinalCommand = false) {
         }
         break;
       }
+      // history -w <path> - write in-memory history to file
+      if (words[1] === "-w" && words[2]) {
+        const filePath = computeAbsolutePath(words[2]);
+        try {
+          const content = commandHistory.join("\n") + "\n";
+          fs.writeFileSync(filePath, content, "utf8");
+        } catch (err) {
+          logger.error(`history: ${words[2]}: cannot write file`, errorFd);
+        }
+        break;
+      }
+      // history [n] - display history, optionally limited to last n entries
       const n = words[1] ? parseInt(words[1], 10) : null;
       const entries = n ? commandHistory.slice(-n) : commandHistory;
       const startIndex = commandHistory.length - entries.length;
