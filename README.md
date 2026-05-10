@@ -1,34 +1,63 @@
 [![progress-banner](https://backend.codecrafters.io/progress/shell/5ee7e47e-73c4-432c-aa11-71df8ecdb827)](https://app.codecrafters.io/users/codecrafters-bot?r=2qF)
 
-This is a starting point for JavaScript solutions to the
-["Build Your Own Shell" Challenge](https://app.codecrafters.io/courses/shell/overview).
+## What I Built
 
-In this challenge, you'll build your own POSIX compliant shell that's capable of
-interpreting shell commands, running external programs and builtin commands like
-cd, pwd, echo and more. Along the way, you'll learn about shell command parsing,
-REPLs, builtin commands, and more.
 
-**Note**: If you're viewing this repo on GitHub, head over to
-[codecrafters.io](https://codecrafters.io) to try the challenge.
+I built a POSIX-style shell in JavaScript that can parse user input, execute
+commands, manage built-ins, and behave like a small interactive terminal.
+The project grew from a minimal REPL into a more complete shell with command
+parsing, pipes, redirection, completion, history, variables, and background
+process support.
 
-# Passing the first stage
+Codecrafters helped me build this project. My profile is
+[vishalraut21066](https://app.codecrafters.io/users/vishalraut21066).
 
-The entry point for your `shell` implementation is in `app/main.js`. Study and
-uncomment the relevant code, and push your changes to pass the first stage:
+The main implementation lives in [app/main.js](app/main.js).
 
-```sh
-git commit -am "pass 1st stage" # any msg
-git push origin master
-```
+## Features
 
-Time to move on to the next stage!
+- Interactive REPL with a prompt and continuous command execution
+- Built-in commands such as `cd`, `pwd`, `echo`, `exit`, `type`, `history`,
+	`jobs`, `complete`, and `declare`
+- Execution of external programs discovered through the `PATH`
+- Argument parsing with support for quotes and escaped characters
+- Pipelining between commands using `|`
+- Output redirection with `>`, `>>`, `1>`, `1>>`, `2>`, and `2>>`
+- Tab completion for commands and file paths
+- Programmable completion registration and removal with `complete -C`,
+	`complete -p`, and `complete -r`
+- Running registered completer scripts and using their output for completion
+- Background jobs with `&`, job tracking, job listing, and automatic reaping
+- Shell variables through `declare`
+- Parameter expansion using `$VAR` and `${VAR}` forms
+- History loading, navigation, display, and persistence through `HISTFILE`
 
-# Stage 2 & beyond
+## What I Learned
 
-Note: This section is for stages 2 and beyond.
+- How to build a shell loop that keeps reading input and executing commands
+- How command tokenization changes when quotes, escapes, and whitespace are
+	involved
+- How to separate parsing, expansion, and execution so the shell stays easier
+	to extend
+- How to run child processes in Node.js and connect their input and output
+- How background processes differ from foreground commands and why job reaping
+	matters
+- How shell completion works and how a completer can be driven by a script
+- How variable storage and parameter expansion affect later stages of command
+	execution
+- How to keep behavior consistent across many features without breaking earlier
+	stages
 
-1. Ensure you have `node (21)` installed locally
-1. Run `./your_program.sh` to run your program, which is implemented in
-   `app/main.js`.
-1. Commit your changes and run `git push origin master` to submit your solution
-   to CodeCrafters. Test output will be streamed to your terminal.
+## Notes
+
+- The shell implementation is centered in [app/main.js](app/main.js)
+- Supporting utilities for tokenizing and path resolution live in
+	[app/utility.js](app/utility.js)
+- Built-in command registration lives in [app/constants.js](app/constants.js)
+
+## Summary
+
+This project is a working JavaScript shell that combines command execution,
+interactive editing, process management, completion, and variable handling in
+one application. It is designed as a learning project, but it now behaves like a
+small practical shell for everyday command-line workflows.
