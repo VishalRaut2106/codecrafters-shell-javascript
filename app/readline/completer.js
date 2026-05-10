@@ -42,25 +42,47 @@ function getAvailableCommands() {
   return cachedCommands;
 }
 
+let lastTabLine = "";
+let tabCount = 0;
+
 const completer = (line) => {
   const availableCommands = getAvailableCommands();
   let hits = availableCommands.filter((cmd) => cmd.startsWith(line));
   
   if (hits.length === 0) {
+    process.stdout.write("\x07"); // bell
+    tabCount = 0;
+    lastTabLine = "";
     return [[], line];
   }
   
   if (hits.length === 1) {
     // Single match - append space for completion
+    tabCount = 0;
+    lastTabLine = "";
     return [[hits[0] + " "], line];
   }
   
-  // Multiple matches - ring bell and show options
-  process.stdout.write("\x07"); // bell
+  // Multiple matches - need to handle double-tab behavior
+  if (line === lastTabLine) {
+    tabCount++;
+  } else {
+    lastTabLine = line;
+    tabCount = 1;
+  }
   
-  // Return the completions for readline to display
-  // Readline will add the spacing between items
-  return [hits, line];
+  if (tabCount === 1) {
+    // First tab - just ring bell
+    process.stdout.write("\x07");
+    return [[], line];
+  }
+  
+  // Second tab - show completions manually and redraw prompt
+  process.stdout.write("\n" + hits.join("  ") + "\n");
+  tabCount = 0;
+  
+  // Return empty array to prevent readline from displaying completions again
+  return [[], line];
 };
 
 module.exports = { completer };
