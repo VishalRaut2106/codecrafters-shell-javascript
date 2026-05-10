@@ -183,18 +183,12 @@ const rl = readline.createInterface({
 
     // Second tab - show completions (display without trailing space, keep / for dirs)
     const displayHits = hits.map(h => h.replace(/ $/, "")).sort();
-    const lineToRestore = line;
     process.stdout.write("\n" + displayHits.join("  ") + "\n");
     tabCount = 0;
     rl.prompt();
-    // Use rl.write to restore the line into readline's internal buffer
-    // so subsequent keypresses are inserted at the correct position
-    if (lineToRestore) {
-      // Write char by char to avoid triggering the 'line' event on \n
-      for (const ch of lineToRestore) {
-        rl.write(ch);
-      }
-    }
+    // Write the line prefix back to stdout for display only
+    // readline will keep its own buffer intact via the return value below
+    process.stdout.write(line);
 
     return [[], prefixToMatch];
   },
