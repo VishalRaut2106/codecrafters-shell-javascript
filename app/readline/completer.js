@@ -59,8 +59,8 @@ const completer = (line) => {
   process.stdout.write("\x07"); // bell
   
   // Return the completions for readline to display
-  // Readline will handle showing these options
-  return [hits.map(h => h + "  "), line];
+  // Readline will add the spacing between items
+  return [hits, line];
 };
 
 module.exports = { completer };

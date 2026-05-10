@@ -18,7 +18,33 @@ const rl = readline.createInterface({
   output: process.stdout,
   prompt: "$ ",
   completer: completer,
+  terminal: true,
 });
+
+// Override _writeToOutput to handle the newline after completion list
+const originalWriteToOutput = rl._writeToOutput;
+let justOutputCompletions = false;
+
+rl._writeToOutput = function(stringToWrite) {
+  // Detect when we're outputting completions (contains multiple double-spaced items)
+  if (stringToWrite.includes('  ') && stringToWrite.trim().split(/\s{2,}/).length > 1) {
+    justOutputCompletions = true;
+    originalWriteToOutput.call(this, stringToWrite);
+    return;
+  }
+  
+  // Skip ONLY the first newline after completions
+  if (justOutputCompletions) {
+    if (stringToWrite === '\r\n' || stringToWrite === '\n') {
+      justOutputCompletions = false;
+      return; // Skip this newline
+    }
+    // If it's not a newline, reset the flag and output normally
+    justOutputCompletions = false;
+  }
+  
+  originalWriteToOutput.call(this, stringToWrite);
+};
 
 rl.prompt();
 
