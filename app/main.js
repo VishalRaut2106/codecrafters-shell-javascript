@@ -116,7 +116,8 @@ const rl = readline.createInterface({
     // Second tab - show completions
     const lineToRestore = line;
     process.stdout.write("\n" + hits.join("  ") + "\n");
-    // Don't call rl.prompt() - just restore the line content
+    // Write the prompt and line content
+    process.stdout.write(rl.prompt);
     process.stdout.write(lineToRestore);
     tabCount = 0;
     
