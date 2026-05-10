@@ -17,9 +17,10 @@ function tokenizeCommand(command) {
     } else if (char === "'" && !inDoubleQuotes) {
       inSingleQuotes = !inSingleQuotes;
       // Don't add the quote character to the token
-    } else if (char === "\\" && inDoubleQuotes) {
+    } else if (char === "\\" && inDoubleQuotes && nextChar) {
       // Backslash in double quotes - escape the next character
-      if (nextChar) {
+      // Only escape special characters: ", ', \, $
+      if (nextChar === '"' || nextChar === "'" || nextChar === "\\" || nextChar === "$") {
         currentToken += nextChar;
         i++; // Skip the next character
       } else {
