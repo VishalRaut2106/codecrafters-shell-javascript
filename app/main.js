@@ -482,7 +482,7 @@ async function mainFn(words, stdin, isFinalCommand = false, runInBackground = fa
       if (words[1] === "-p" && words[2]) {
         const commandName = words[2];
         if (commandName in completionRules) {
-          logger.log(`complete -C ${completionRules[commandName]} ${commandName}`, out);
+          logger.log(`complete -C '${completionRules[commandName]}' ${commandName}`, out);
         } else {
           logger.error(`complete: ${commandName}: no completion specification`, errorFd);
         }
