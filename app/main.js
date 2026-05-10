@@ -6,10 +6,50 @@ const {
   tokenizeCommand,
   groupTokens,
 } = require("./utility");
-const { completer, getAvailableCommands } = require("./readline/completer");
 const { BUILTIN_COMMANDS, EXTERNAL_COMMANDS } = require("./constants");
 const logger = require("./logger");
 const { PassThrough } = require("stream");
+const { KNOWN_COMMANDS } = require("./functions/type");
+
+let cachedCommands = null;
+let lastPathEnv = null;
+
+function getAvailableCommands() {
+  const pathEnv = process.env.PATH;
+  
+  // Only refresh if PATH has changed or cache is empty
+  if (cachedCommands && pathEnv === lastPathEnv) {
+    return cachedCommands;
+  }
+  
+  const commands = new Set(KNOWN_COMMANDS);
+  lastPathEnv = pathEnv;
+  
+  if (pathEnv) {
+    const paths = pathEnv.split(process.platform === "win32" ? ";" : ":");
+    for (const dir of paths) {
+      try {
+        const files = fs.readdirSync(dir);
+        for (const file of files) {
+          // Add command without extension on Unix, with common extensions on Windows
+          if (process.platform === "win32") {
+            if (file.endsWith(".exe") || file.endsWith(".bat") || file.endsWith(".cmd")) {
+              const cmdName = file.substring(0, file.lastIndexOf("."));
+              commands.add(cmdName);
+            }
+          } else {
+            commands.add(file);
+          }
+        }
+      } catch (err) {
+        // Ignore errors reading directories
+      }
+    }
+  }
+  
+  cachedCommands = Array.from(commands).sort();
+  return cachedCommands;
+}
 
 const commandHistory = [];
 
@@ -32,13 +72,11 @@ const rl = readline.createInterface({
     }
     
     if (hits.length === 1) {
-      // Single match - manually apply completion by writing the remaining part
+      // Single match - return it in the format readline expects
       tabCount = 0;
       lastTabLine = "";
-      const completion = hits[0];
-      const remaining = completion.substring(line.length) + " ";
-      rl.write(remaining);
-      return [[], line];
+      // Return the full completion with space
+      return [[hits[0] + " "], line];
     }
     
     // Multiple matches - handle double-tab
