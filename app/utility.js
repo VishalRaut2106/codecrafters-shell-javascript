@@ -11,7 +11,11 @@ function tokenizeCommand(command) {
     const char = command[i];
     const nextChar = command[i + 1];
 
-    if (char === '"' && !inSingleQuotes) {
+    if (char === "\\" && !inSingleQuotes && !inDoubleQuotes && nextChar) {
+      // Backslash outside quotes - always escapes the next character literally
+      currentToken += nextChar;
+      i++;
+    } else if (char === '"' && !inSingleQuotes) {
       inDoubleQuotes = !inDoubleQuotes;
       // Don't add the quote character to the token
     } else if (char === "'" && !inDoubleQuotes) {
