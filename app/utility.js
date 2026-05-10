@@ -17,6 +17,14 @@ function tokenizeCommand(command) {
     } else if (char === "'" && !inDoubleQuotes) {
       inSingleQuotes = !inSingleQuotes;
       // Don't add the quote character to the token
+    } else if (char === "\\" && inDoubleQuotes) {
+      // Backslash in double quotes - escape the next character
+      if (nextChar) {
+        currentToken += nextChar;
+        i++; // Skip the next character
+      } else {
+        currentToken += char;
+      }
     } else if ((char === " " || char === "\t") && !inDoubleQuotes && !inSingleQuotes) {
       if (currentToken) {
         tokens.push(currentToken);
