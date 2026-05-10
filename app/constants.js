@@ -1,6 +1,6 @@
 const fs = require("fs");
 
-const BUILTIN_COMMANDS = ["exit", "pwd", "cd", "echo", "type", "history"];
+const BUILTIN_COMMANDS = ["exit", "pwd", "cd", "echo", "type", "history", "jobs"];
 
 // External commands will be discovered dynamically
 const EXTERNAL_COMMANDS = {};

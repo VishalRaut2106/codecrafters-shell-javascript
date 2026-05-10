@@ -377,6 +377,8 @@ async function mainFn(words, stdin, isFinalCommand = false) {
       logger.log(formatted.join("\n"), out);
       break;
     }
+    case "jobs":
+      break;
     default:
       const result = words[0] in EXTERNAL_COMMANDS;
       try {
