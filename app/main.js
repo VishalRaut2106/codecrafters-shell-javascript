@@ -251,6 +251,22 @@ async function mainFn(words, stdin, isFinalCommand = false) {
       }
       break;
     case "history": {
+      // history -r <path> - read history from file and append to in-memory history
+      if (words[1] === "-r" && words[2]) {
+        const filePath = computeAbsolutePath(words[2]);
+        try {
+          const content = fs.readFileSync(filePath, "utf8");
+          const lines = content.split("\n").filter(line => line.trim() !== "");
+          for (const line of lines) {
+            commandHistory.push(line);
+            rl.history = rl.history || [];
+            rl.history.unshift(line);
+          }
+        } catch (err) {
+          logger.error(`history: ${words[2]}: cannot read file`, errorFd);
+        }
+        break;
+      }
       const n = words[1] ? parseInt(words[1], 10) : null;
       const entries = n ? commandHistory.slice(-n) : commandHistory;
       const startIndex = commandHistory.length - entries.length;
