@@ -224,12 +224,17 @@ function printJobsAndReapCompleted() {
 let lastTabLine = "";
 let tabCount = 0;
 
+// When running as a subprocess inside the Go gatekeeper, disable terminal mode
+// so readline does NOT echo each character back to stdout (the browser handles its own display)
+const isGatekeeperMode = process.env.GATEKEEPER_MODE === "1";
+
 // Create readline with a proper completer and history enabled
 const rl = readline.createInterface({
   input: process.stdin,
-  output: process.stdout,
+  output: isGatekeeperMode ? null : process.stdout,
   prompt: "$ ",
   historySize: 1000, // Enable history with size limit
+  terminal: !isGatekeeperMode, // Disable terminal mode when run as gatekeeper subprocess
   completer: (line) => {
     const spaceIndex = line.indexOf(" ");
     const isArgCompletion = spaceIndex !== -1;
@@ -380,10 +385,15 @@ const rl = readline.createInterface({
 
     return [[], prefixToMatch];
   },
-  terminal: true,
+  terminal: !isGatekeeperMode,
 });
 
-rl.prompt();
+// Write initial prompt (in gatekeeper mode, rl.prompt() is silent, so write directly)
+if (isGatekeeperMode) {
+  process.stdout.write("$ ");
+} else {
+  rl.prompt();
+}
 
 // Load history from HISTFILE on startup
 if (process.env.HISTFILE) {
@@ -436,7 +446,12 @@ rl.on("line", async (command) => {
   }
 
   await reapJobsBeforePrompt();
-  rl.prompt();
+  // In gatekeeper mode, rl.prompt() is silent (output:null), so write prompt directly
+  if (isGatekeeperMode) {
+    process.stdout.write("$ ");
+  } else {
+    rl.prompt();
+  }
 });
 
 async function mainFn(words, stdin, isFinalCommand = false, runInBackground = false, originalCommand = "") {
